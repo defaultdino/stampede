@@ -1,12 +1,5 @@
 #include <stdio.h>
 
-struct config {
-    char *target;
-    int jobs;
-    int threads_per_job;
-    char *folders[];
-};
-
 /// Takes a config.yml/config.json that contains
 /// a job list pointing to folder(s) of videos and transcodes
 /// to target codecs/resolutions with progress bars
