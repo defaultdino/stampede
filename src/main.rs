@@ -15,11 +15,14 @@ use std::{
     thread::{self},
 };
 
-use crate::discover::discover_media_containers;
+use crate::{
+    discover::discover_media_containers,
+    transcode::{codec::VideoCodec, transcode},
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
-    target: String,
+    target: VideoCodec,
     jobs: u8,
     threads_per_job: u8,
     folders: Vec<PathBuf>,
@@ -32,8 +35,8 @@ pub struct Options {
     config: Vec<PathBuf>,
     /// the target codec to transcode container media into
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[arg(short, long)]
-    target: Option<String>,
+    #[arg(short, long, value_enum)]
+    target: Option<VideoCodec>,
     /// number of transcode jobs to perform concurrently
     #[serde(skip_serializing_if = "Option::is_none")]
     #[arg(short, long)]
@@ -61,7 +64,11 @@ fn create_and_join_threads(config: Config, s: Sender<PathBuf>, r: Receiver<PathB
     let transcode_handles: Vec<_> = (0..config.jobs)
         .map(|_| {
             let r = r.clone();
-            thread::spawn(move || while let Ok(_path) = r.recv() {})
+            thread::spawn(move || {
+                while let Ok(_path) = r.recv() {
+                    transcode(&r, config.target);
+                }
+            })
         })
         .collect();
 
@@ -82,7 +89,6 @@ impl Options {
         let config: Config = figment.extract().context("failed to extract config")?;
         let (s, r) = unbounded::<PathBuf>();
         create_and_join_threads(config, s, r);
-
         Ok(ExitCode::SUCCESS)
     }
 

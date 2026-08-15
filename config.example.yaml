@@ -1,6 +1,6 @@
 # must be one of:
 # [ av1, avc, h.263, hevc, mp4v-es, mpeg-1, mpeg2, vp8, vp9 ]
-target: "h.264"
+target: "h264"
 # how many files to transcode concurrently
 jobs: 2
 # internal threading value passed to libavcodec
