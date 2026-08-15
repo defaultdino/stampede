@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 clap = {version = "4.6.6", features = ["derive", "env", "suggestions"]}
+crossbeam-channel = "0.5.16"
 ffmpeg-next = "9.0.0"
 figment = { version = "0.10.19", features = ["env", "yaml"] }
 serde = { version = "1.0.229", features = ["derive"] }
