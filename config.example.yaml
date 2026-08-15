@@ -1,14 +1,13 @@
 # must be one of:
 # [ av1, avc, h.263, hevc, mp4v-es, mpeg-1, mpeg2, vp8, vp9 ]
-target: h.264
-
+target: "h.264"
 # how many files to transcode concurrently
 jobs: 2
 # internal threading value passed to libavcodec
-threads_per_job: 4
+threads_per_jobs: 4
 
 # stampede will target any and all media containers
 # under these folders
-folders: 
-  - /media/movies
-  - /media/series
+folders:
+  - "/media/movies"
+  - "/media/series"
