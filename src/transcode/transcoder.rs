@@ -8,7 +8,7 @@ use crate::transcode::video_codec::VideoCodec;
 // https://github.com/zmwangx/rust-ffmpeg/blob/master/examples/transcode-x264.rs
 
 pub struct Transcoder {
-    pub ost_index: usize,
+    pub output_stream_idx: usize,
     pub decoder: decoder::Video,
     pub input_time_base: Rational,
     pub encoder: encoder::Video,
@@ -23,7 +23,7 @@ impl Transcoder {
     pub fn new(
         ist: &format::stream::Stream,
         output_ctx: &mut format::context::Output,
-        ost_index: usize,
+        output_stream_idx: usize,
         opts: Dictionary,
         enable_logging: bool,
         target: VideoCodec,
@@ -64,7 +64,7 @@ impl Transcoder {
         ost.set_parameters(&opened_encoder);
 
         Ok(Self {
-            ost_index,
+            output_stream_idx,
             decoder,
             input_time_base: ist.time_base(),
             encoder: opened_encoder,
@@ -99,7 +99,7 @@ impl Transcoder {
     ) {
         let mut encoded = Packet::empty();
         while self.encoder.receive_packet(&mut encoded).is_ok() {
-            encoded.set_stream(self.ost_index);
+            encoded.set_stream(self.output_stream_idx);
             encoded.rescale_ts(self.input_time_base, ost_time_base);
             encoded.write_interleaved(output_ctx).unwrap();
         }

@@ -5,11 +5,11 @@ use crate::transcode::{transcoder::Transcoder, video_codec::VideoCodec};
 pub enum StreamRoute {
     Skip,
     Copy {
-        ost_index: usize,
+        output_stream_idx: usize,
         ist_time_base: Rational,
     },
     Transcode {
-        ost_index: usize,
+        output_stream_idx: usize,
         transcoder: Transcoder,
     },
 }

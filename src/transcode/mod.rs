@@ -31,6 +31,7 @@ pub fn transcode(
     let codec_opts = parse_codec_opts(opts);
     let mut input_ctx = format::input(&path).unwrap();
     let mut output_ctx = format::output(&path).unwrap();
+    
     format::context::input::dump(&input_ctx, 0, path.to_str());
 
     let mut stream_routing_ctx = StreamRoutingCtx::new(target, input_ctx.nb_streams());
@@ -94,7 +95,7 @@ fn setup_stream_mapping_and_transcoders<'a>(
             )
             .unwrap();
             StreamRoute::Transcode {
-                ost_index: output_stream_idx,
+                output_stream_idx: output_stream_idx,
                 transcoder,
             }
         } else {
@@ -106,7 +107,7 @@ fn setup_stream_mapping_and_transcoders<'a>(
                 (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
             }
             StreamRoute::Copy {
-                ost_index: output_stream_idx,
+                output_stream_idx: output_stream_idx,
                 ist_time_base: input_stream.time_base(),
             }
         };
@@ -132,11 +133,11 @@ fn write_output_header(
 fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_ctx: &mut Output) {
     for route in stream_routing_ctx.routes.iter_mut() {
         if let StreamRoute::Transcode {
-            ost_index,
+            output_stream_idx,
             transcoder,
         } = route
         {
-            let ost_time_base = stream_routing_ctx.output_time_bases[*ost_index];
+            let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
             transcoder.send_eof_to_decoder();
             transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base);
             transcoder.send_eof_to_encoder();
@@ -156,22 +157,22 @@ fn transcode_and_remux_packets(
         match &mut stream_routing_ctx.routes[stream.index()] {
             StreamRoute::Skip => continue,
             StreamRoute::Transcode {
-                ost_index,
+                output_stream_idx,
                 transcoder,
             } => {
-                let ost_time_base = stream_routing_ctx.output_time_bases[*ost_index];
+                let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
                 packet.rescale_ts(stream.time_base(), transcoder.decoder.time_base());
                 transcoder.send_packet_to_decoder(&packet);
                 transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base);
             }
             StreamRoute::Copy {
-                ost_index,
+                output_stream_idx,
                 ist_time_base,
             } => {
-                let ost_time_base = stream_routing_ctx.output_time_bases[*ost_index];
+                let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
                 packet.rescale_ts(*ist_time_base, ost_time_base);
                 packet.set_position(-1);
-                packet.set_stream(*ost_index as _);
+                packet.set_stream(*output_stream_idx as _);
                 packet.write_interleaved(output_ctx).unwrap();
             }
         }
