@@ -1,5 +1,4 @@
 use crossbeam_channel::Sender;
-use log;
 use std::path::{Path, PathBuf};
 
 /// Walks folder to discover media containers in config/cli args.

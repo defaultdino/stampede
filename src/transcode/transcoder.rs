@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Instant};
 
-use ffmpeg_next::{Dictionary, Packet, Rational, codec, decoder, encoder, format};
+use ffmpeg_next::{Dictionary, Packet, Rational, codec, decoder, encoder, format, frame, picture};
 
 use crate::transcode::video_codec::VideoCodec;
 
@@ -8,15 +8,15 @@ use crate::transcode::video_codec::VideoCodec;
 // https://github.com/zmwangx/rust-ffmpeg/blob/master/examples/transcode-x264.rs
 
 pub struct Transcoder {
-    ost_index: usize,
-    decoder: decoder::Video,
-    input_time_base: Rational,
-    encoder: encoder::Video,
-    logging_enabled: bool,
-    frame_count: usize,
-    last_log_frame_count: usize,
-    starting_time: Instant,
-    last_log_time: Instant,
+    pub ost_index: usize,
+    pub decoder: decoder::Video,
+    pub input_time_base: Rational,
+    pub encoder: encoder::Video,
+    pub logging_enabled: bool,
+    pub frame_count: usize,
+    pub last_log_frame_count: usize,
+    pub starting_time: Instant,
+    pub last_log_time: Instant,
 }
 
 impl Transcoder {
@@ -84,6 +84,14 @@ impl Transcoder {
         self.decoder.send_eof().unwrap();
     }
 
+    pub fn send_eof_to_encoder(&mut self) {
+        self.encoder.send_eof().unwrap();
+    }
+
+    fn send_frame_to_encoder(&mut self, frame: &frame::Video) {
+        self.encoder.send_frame(frame).unwrap();
+    }
+
     pub fn receive_and_process_encoded_packets(
         &mut self,
         output_ctx: &mut format::context::Output,
@@ -94,6 +102,25 @@ impl Transcoder {
             encoded.set_stream(self.ost_index);
             encoded.rescale_ts(self.input_time_base, ost_time_base);
             encoded.write_interleaved(output_ctx).unwrap();
+        }
+    }
+
+    pub fn receive_and_process_decoded_frames(
+        &mut self,
+        octx: &mut format::context::Output,
+        ost_time_base: Rational,
+    ) {
+        let mut frame = frame::Video::empty();
+        while self.decoder.receive_frame(&mut frame).is_ok() {
+            self.frame_count += 1;
+            let timestamp = frame.timestamp();
+            self.log(f64::from(
+                Rational(timestamp.unwrap_or(0) as i32, 1) * self.decoder.time_base(),
+            ));
+            frame.set_pts(timestamp);
+            frame.set_kind(picture::Type::None);
+            self.send_frame_to_encoder(&frame);
+            self.receive_and_process_encoded_packets(octx, ost_time_base);
         }
     }
 

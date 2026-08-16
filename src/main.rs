@@ -86,7 +86,14 @@ fn create_and_join_threads(config: &Config, s: Sender<PathBuf>, r: Receiver<Path
             let opts = Arc::clone(&opts);
             thread::spawn(move || {
                 while let Ok(path) = r.recv() {
-                    transcode(&opts, path, target);
+                    match transcode(&opts, path, target) {
+                        Ok(_) => {
+                            log::info!("finished transcoding video stream to {}", target.codec_id());
+                        },
+                        Err(e) => {
+                            log::error!("failed to transcode video stream {}", e);
+                        }
+                    }
                 }
             })
         })
