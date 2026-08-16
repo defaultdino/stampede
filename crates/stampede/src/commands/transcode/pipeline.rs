@@ -9,15 +9,10 @@ use ffmpeg_next::{
     media::{self, Type},
 };
 
-use crate::transcode::{
-    stream_route::{StreamRoute, StreamRoutingCtx},
-    transcoder::{Transcoder, parse_codec_opts},
-    video_codec::VideoCodec,
-};
+use ::media::video_codec::VideoCodec;
 
-pub mod stream_route;
-mod transcoder;
-pub mod video_codec;
+use super::stream_route::{StreamRoute, StreamRoutingCtx};
+use super::transcoder::{Transcoder, parse_codec_opts};
 
 pub fn transcode(
     opts: &HashMap<String, String>,

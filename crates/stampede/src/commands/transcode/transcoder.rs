@@ -2,7 +2,7 @@ use std::{collections::HashMap, time::Instant};
 
 use ffmpeg_next::{Dictionary, Packet, Rational, codec, decoder, encoder, format, frame, picture};
 
-use crate::transcode::video_codec::VideoCodec;
+use media::video_codec::VideoCodec;
 
 // the resource used here for reference was
 // https://github.com/zmwangx/rust-ffmpeg/blob/master/examples/transcode-x264.rs

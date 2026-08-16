@@ -1,6 +1,6 @@
+use super::transcoder::Transcoder;
 use ffmpeg_next::Rational;
-
-use crate::transcode::{transcoder::Transcoder, video_codec::VideoCodec};
+use media::video_codec::VideoCodec;
 
 pub enum StreamRoute {
     Skip,
