@@ -1,6 +1,8 @@
 use std::{collections::HashMap, time::Instant};
 
-use ffmpeg_next::{Dictionary, Packet, Rational, codec, decoder, encoder, format, frame, picture};
+use ffmpeg_next::{
+    Dictionary, Packet, Rational, codec, decoder, encoder, format, frame, picture, threading,
+};
 
 use media::video_codec::VideoCodec;
 
@@ -22,6 +24,7 @@ pub struct Transcoder {
 impl Transcoder {
     pub fn new(
         ist: &format::stream::Stream,
+        threads_per_job: usize,
         output_ctx: &mut format::context::Output,
         output_stream_idx: usize,
         opts: Dictionary,
@@ -32,17 +35,24 @@ impl Transcoder {
             .format()
             .flags()
             .contains(format::Flags::GLOBAL_HEADER);
-        let decoder = ffmpeg_next::codec::context::Context::from_parameters(ist.parameters())?
-            .decoder()
-            .video()?;
+        let mut decoder_ctx =
+            ffmpeg_next::codec::context::Context::from_parameters(ist.parameters())?;
+        decoder_ctx.set_threading(threading::Config {
+            kind: threading::Type::Frame,
+            count: threads_per_job,
+        });
+        let decoder = decoder_ctx.decoder().video()?;
 
         let codec = encoder::find(target.codec_id());
         let mut ost = output_ctx.add_stream(codec)?;
 
-        let mut encoder =
-            codec::context::Context::new_with_codec(codec.ok_or(ffmpeg_next::Error::InvalidData)?)
-                .encoder()
-                .video()?;
+        let mut encoder_ctx =
+            codec::context::Context::new_with_codec(codec.ok_or(ffmpeg_next::Error::InvalidData)?);
+        encoder_ctx.set_threading(threading::Config {
+            kind: threading::Type::Frame,
+            count: threads_per_job,
+        });
+        let mut encoder = encoder_ctx.encoder().video()?;
 
         ost.set_parameters(&encoder);
 

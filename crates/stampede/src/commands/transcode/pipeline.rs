@@ -16,6 +16,7 @@ use super::transcoder::{Transcoder, parse_codec_opts};
 
 pub fn transcode(
     opts: &HashMap<String, String>,
+    threads_per_job: usize,
     log_enabled: bool,
     path: PathBuf,
     target: VideoCodec,
@@ -36,6 +37,7 @@ pub fn transcode(
 
     setup_stream_mapping_and_transcoders(
         log_enabled,
+        threads_per_job,
         codec_opts,
         &mut output_ctx,
         &input_ctx,
@@ -65,6 +67,7 @@ fn eligible_input_stream_medium(input_stream_medium: &Type) -> bool {
 
 fn setup_stream_mapping_and_transcoders<'a>(
     log_enabled: bool,
+    threads_per_job: usize,
     codec_opts: Dictionary<'a>,
     output_ctx: &mut Output,
     input_ctx: &Input,
@@ -82,6 +85,7 @@ fn setup_stream_mapping_and_transcoders<'a>(
         {
             let transcoder = Transcoder::new(
                 &input_stream,
+                threads_per_job,
                 output_ctx,
                 output_stream_idx as _,
                 codec_opts.to_owned(),

@@ -50,7 +50,13 @@ impl Options {
         let log_enabled = config.job.log;
 
         process_media(&config.job, move |path| {
-            match transcode(&opts, log_enabled, path, target) {
+            match transcode(
+                &opts,
+                config.job.threads_per_job as usize,
+                log_enabled,
+                path,
+                target,
+            ) {
                 Ok(_) => {
                     log::info!("finished transcoding video stream to {}", target.codec_id());
                 }
