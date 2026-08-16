@@ -16,7 +16,8 @@ folders:
 log: true
 
 # these are just "sane" defaults,
-# feel free to override
+# feel free to override. a codec config
+# is expected to exist for the target you set
 codecs:
   h264:
     preset: "medium"
