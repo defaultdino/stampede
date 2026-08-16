@@ -28,6 +28,7 @@ struct Config {
     jobs: u8,
     threads_per_job: u8,
     folders: Vec<PathBuf>,
+    log: bool,
     #[serde(default)]
     codecs: HashMap<VideoCodec, HashMap<String, String>>,
 }
@@ -55,10 +56,7 @@ pub struct Options {
     folders: Option<Vec<String>>,
 }
 
-fn get_codec_opts(
-    config: &Config,
-    codec: VideoCodec,
-) -> Option<&HashMap<String, String>> {
+fn get_codec_opts(config: &Config, codec: VideoCodec) -> Option<&HashMap<String, String>> {
     config.codecs.get(&codec)
 }
 
@@ -69,6 +67,7 @@ fn create_and_join_threads(config: &Config, s: Sender<PathBuf>, r: Receiver<Path
     let opts = Arc::new(opts);
 
     let target = config.target;
+    let log_enabled = config.log;
 
     let discovery_handles: Vec<_> = config
         .folders
@@ -86,10 +85,13 @@ fn create_and_join_threads(config: &Config, s: Sender<PathBuf>, r: Receiver<Path
             let opts = Arc::clone(&opts);
             thread::spawn(move || {
                 while let Ok(path) = r.recv() {
-                    match transcode(&opts, path, target) {
+                    match transcode(&opts, log_enabled, path, target) {
                         Ok(_) => {
-                            log::info!("finished transcoding video stream to {}", target.codec_id());
-                        },
+                            log::info!(
+                                "finished transcoding video stream to {}",
+                                target.codec_id()
+                            );
+                        }
                         Err(e) => {
                             log::error!("failed to transcode video stream {}", e);
                         }

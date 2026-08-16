@@ -13,6 +13,8 @@ folders:
   - "/media/movies"
   - "/media/series"
 
+log: true
+
 # these are just "sane" defaults,
 # feel free to override
 codecs:

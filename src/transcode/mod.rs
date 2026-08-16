@@ -21,6 +21,7 @@ pub mod video_codec;
 
 pub fn transcode(
     opts: &HashMap<String, String>,
+    log_enabled: bool,
     path: PathBuf,
     target: VideoCodec,
 ) -> Result<(), ffmpeg_next::Error> {
@@ -38,15 +39,9 @@ pub fn transcode(
 
     let mut stream_routing_ctx = StreamRoutingCtx::new(target, input_ctx.nb_streams());
 
-    let video_stream_idx = input_ctx
-        .streams()
-        .best(media::Type::Video)
-        .map(|stream| stream.index());
-
     setup_stream_mapping_and_transcoders(
-        target,
+        log_enabled,
         codec_opts,
-        video_stream_idx,
         &mut output_ctx,
         &input_ctx,
         &mut stream_routing_ctx,
@@ -74,9 +69,8 @@ fn eligible_input_stream_medium(input_stream_medium: &Type) -> bool {
 }
 
 fn setup_stream_mapping_and_transcoders<'a>(
-    target: VideoCodec,
+    log_enabled: bool,
     codec_opts: Dictionary<'a>,
-    video_stream_idx: Option<usize>,
     output_ctx: &mut Output,
     input_ctx: &Input,
     stream_routing_ctx: &mut StreamRoutingCtx,
@@ -89,14 +83,14 @@ fn setup_stream_mapping_and_transcoders<'a>(
         }
 
         stream_routing_ctx.routes[input_stream_idx] = if medium == media::Type::Video
-            && input_stream.parameters().id() != target.codec_id()
+            && input_stream.parameters().id() != stream_routing_ctx.target.codec_id()
         {
             let transcoder = Transcoder::new(
                 &input_stream,
                 output_ctx,
                 output_stream_idx as _,
                 codec_opts.to_owned(),
-                Some(input_stream_idx) == video_stream_idx,
+                log_enabled,
                 stream_routing_ctx.target,
             )
             .unwrap();

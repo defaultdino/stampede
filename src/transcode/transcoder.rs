@@ -141,8 +141,8 @@ impl Transcoder {
 
     fn logging_enabled_and_eligible(&mut self) -> bool {
         self.logging_enabled
-            || (self.frame_count - self.last_log_frame_count < 100
-                && self.last_log_time.elapsed().as_secs_f64() < 1.0)
+            && (self.frame_count - self.last_log_frame_count >= 100
+                || self.last_log_time.elapsed().as_secs_f64() >= 1.0)
     }
 }
 
