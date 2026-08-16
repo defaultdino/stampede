@@ -1,0 +1,39 @@
+# must be one of:
+# [ h264, h265, av1, vp9 ]
+target: "h264"
+# 
+# how many files to transcode concurrently
+jobs: 2
+# internal threading value passed to libavcodec
+threads_per_job: 4
+
+# stampede will target any and all media containers
+# under these folders
+folders:
+  - "/media/movies"
+  - "/media/series"
+
+# these are just "sane" defaults,
+# feel free to override
+codecs:
+  h264:
+    preset: "medium"
+    crf: "23"
+    profile: "high"
+    tune: "film"
+
+  h265:
+    preset: "medium"
+    crf: "28"
+    profile: "main"
+
+  av1:
+    preset: "8"
+    crf: "30"
+    cpu-used: "8"
+
+  vp9:
+    crf: "31"
+    b: "0"
+    deadline: "good"
+    cpu-used: "2"

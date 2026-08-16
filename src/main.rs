@@ -10,14 +10,16 @@ use figment::{
 };
 use serde::{self, Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     path::PathBuf,
     process::ExitCode,
+    sync::Arc,
     thread::{self},
 };
 
 use crate::{
     discover::discover_media_containers,
-    transcode::{codec::VideoCodec, transcode},
+    transcode::{transcode, video_codec::VideoCodec},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,6 +28,8 @@ struct Config {
     jobs: u8,
     threads_per_job: u8,
     folders: Vec<PathBuf>,
+    #[serde(default)]
+    codecs: HashMap<VideoCodec, HashMap<String, String>>,
 }
 
 #[derive(Parser, Serialize, Debug)]
@@ -51,10 +55,25 @@ pub struct Options {
     folders: Option<Vec<String>>,
 }
 
-fn create_and_join_threads(config: Config, s: Sender<PathBuf>, r: Receiver<PathBuf>) {
+fn get_codec_opts(
+    config: &Config,
+    codec: VideoCodec,
+) -> Option<&HashMap<String, String>> {
+    config.codecs.get(&codec)
+}
+
+fn create_and_join_threads(config: &Config, s: Sender<PathBuf>, r: Receiver<PathBuf>) {
+    let opts: HashMap<String, String> = get_codec_opts(config, config.target)
+        .cloned()
+        .unwrap_or_default();
+    let opts = Arc::new(opts);
+
+    let target = config.target;
+
     let discovery_handles: Vec<_> = config
         .folders
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|path| {
             let s = s.clone();
             thread::spawn(move || discover_media_containers(&s, path))
@@ -64,9 +83,10 @@ fn create_and_join_threads(config: Config, s: Sender<PathBuf>, r: Receiver<PathB
     let transcode_handles: Vec<_> = (0..config.jobs)
         .map(|_| {
             let r = r.clone();
+            let opts = Arc::clone(&opts);
             thread::spawn(move || {
-                while let Ok(_path) = r.recv() {
-                    transcode(&r, config.target);
+                while let Ok(path) = r.recv() {
+                    transcode(&opts, path, target);
                 }
             })
         })
@@ -88,7 +108,7 @@ impl Options {
     fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
         let config: Config = figment.extract().context("failed to extract config")?;
         let (s, r) = unbounded::<PathBuf>();
-        create_and_join_threads(config, s, r);
+        create_and_join_threads(&config, s, r);
         Ok(ExitCode::SUCCESS)
     }
 
