@@ -10,12 +10,14 @@ use ffmpeg_next::{
 };
 
 use crate::transcode::{
-    stream_route::{StreamRoute, StreamRoutingCtx}, transcoder::{Transcoder, parse_codec_opts}, video_codec::VideoCodec,
+    stream_route::{StreamRoute, StreamRoutingCtx},
+    transcoder::{Transcoder, parse_codec_opts},
+    video_codec::VideoCodec,
 };
 
+pub mod stream_route;
 mod transcoder;
 pub mod video_codec;
-pub mod stream_route;
 
 pub fn transcode(
     opts: &HashMap<String, String>,
@@ -31,7 +33,7 @@ pub fn transcode(
     let codec_opts = parse_codec_opts(opts);
     let mut input_ctx = format::input(&path).unwrap();
     let mut output_ctx = format::output(&path).unwrap();
-    
+
     format::context::input::dump(&input_ctx, 0, path.to_str());
 
     let mut stream_routing_ctx = StreamRoutingCtx::new(target, input_ctx.nb_streams());
@@ -42,6 +44,7 @@ pub fn transcode(
         .map(|stream| stream.index());
 
     setup_stream_mapping_and_transcoders(
+        target,
         codec_opts,
         video_stream_idx,
         &mut output_ctx,
@@ -71,6 +74,7 @@ fn eligible_input_stream_medium(input_stream_medium: &Type) -> bool {
 }
 
 fn setup_stream_mapping_and_transcoders<'a>(
+    target: VideoCodec,
     codec_opts: Dictionary<'a>,
     video_stream_idx: Option<usize>,
     output_ctx: &mut Output,
@@ -84,7 +88,9 @@ fn setup_stream_mapping_and_transcoders<'a>(
             continue;
         }
 
-        stream_routing_ctx.routes[input_stream_idx] = if medium == media::Type::Video {
+        stream_routing_ctx.routes[input_stream_idx] = if medium == media::Type::Video
+            && input_stream.parameters().id() != target.codec_id()
+        {
             let transcoder = Transcoder::new(
                 &input_stream,
                 output_ctx,
