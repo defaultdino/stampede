@@ -95,7 +95,7 @@ fn setup_stream_mapping_and_transcoders<'a>(
             )
             .unwrap();
             StreamRoute::Transcode {
-                output_stream_idx: output_stream_idx,
+                output_stream_idx,
                 transcoder,
             }
         } else {
@@ -107,8 +107,8 @@ fn setup_stream_mapping_and_transcoders<'a>(
                 (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
             }
             StreamRoute::Copy {
-                output_stream_idx: output_stream_idx,
-                ist_time_base: input_stream.time_base(),
+                output_stream_idx,
+                input_stream_time_base: input_stream.time_base(),
             }
         };
 
@@ -167,10 +167,10 @@ fn transcode_and_remux_packets(
             }
             StreamRoute::Copy {
                 output_stream_idx,
-                ist_time_base,
+                input_stream_time_base,
             } => {
                 let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
-                packet.rescale_ts(*ist_time_base, ost_time_base);
+                packet.rescale_ts(*input_stream_time_base, ost_time_base);
                 packet.set_position(-1);
                 packet.set_stream(*output_stream_idx as _);
                 packet.write_interleaved(output_ctx).unwrap();

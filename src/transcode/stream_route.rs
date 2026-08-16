@@ -6,7 +6,7 @@ pub enum StreamRoute {
     Skip,
     Copy {
         output_stream_idx: usize,
-        ist_time_base: Rational,
+        input_stream_time_base: Rational,
     },
     Transcode {
         output_stream_idx: usize,
