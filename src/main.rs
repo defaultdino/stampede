@@ -111,6 +111,7 @@ impl Options {
 }
 
 fn main() -> anyhow::Result<ExitCode> {
+    env_logger::init();
     let options = Options::parse();
     let figment = options.figment();
 
