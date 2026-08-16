@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
-use figment::{Figment, providers::Serialized};
+use figment::Figment;
 use media::job::process_media;
 use media::video_codec::VideoCodec;
 use serde::Serialize;
@@ -39,11 +39,7 @@ pub struct Options {
 
 impl Options {
     pub fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
-        let config: Config = figment
-            .clone()
-            .admerge(Serialized::defaults(&self))
-            .extract()
-            .context("failed to extract config")?;
+        let config: Config = figment.extract().context("failed to extract config")?;
 
         let opts = Arc::new(
             get_codec_opts(&config, config.target)
@@ -70,4 +66,22 @@ impl Options {
 
 fn get_codec_opts(config: &Config, codec: VideoCodec) -> Option<&HashMap<String, String>> {
     config.codecs.get(&codec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_and_threads_per_job_are_optional() {
+        let opts = Options::try_parse_from(["stampede"]).unwrap();
+        assert!(opts.target.is_none());
+        assert!(opts.threads_per_job.is_none());
+    }
+
+    #[test]
+    fn accepts_explicit_target() {
+        let opts = Options::try_parse_from(["stampede", "--target", "h264"]).unwrap();
+        assert_eq!(opts.target, Some(VideoCodec::H264));
+    }
 }
