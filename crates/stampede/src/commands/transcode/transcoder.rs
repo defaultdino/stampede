@@ -15,43 +15,49 @@ pub struct Transcoder {
     pub input_time_base: Rational,
     pub encoder: encoder::Video,
     pub logging_enabled: bool,
+    pub source_label: String,
     pub frame_count: usize,
     pub last_log_frame_count: usize,
     pub starting_time: Instant,
     pub last_log_time: Instant,
 }
 
+pub struct TranscodeJobConfig<'a> {
+    pub threads_per_job: usize,
+    pub target: VideoCodec,
+    pub logging_enabled: bool,
+    pub opts: Dictionary<'a>,
+}
+
 impl Transcoder {
     pub fn new(
         ist: &format::stream::Stream,
-        threads_per_job: usize,
         output_ctx: &mut format::context::Output,
         output_stream_idx: usize,
-        opts: Dictionary,
-        enable_logging: bool,
-        target: VideoCodec,
+        source_label: impl Into<String>,
+        transcode_job_config: &TranscodeJobConfig,
     ) -> Result<Self, ffmpeg_next::Error> {
         let global_header = output_ctx
             .format()
             .flags()
             .contains(format::Flags::GLOBAL_HEADER);
+
+        let threading_config = threading::Config {
+            kind: threading::Type::Frame,
+            count: transcode_job_config.threads_per_job,
+        };
+
         let mut decoder_ctx =
             ffmpeg_next::codec::context::Context::from_parameters(ist.parameters())?;
-        decoder_ctx.set_threading(threading::Config {
-            kind: threading::Type::Frame,
-            count: threads_per_job,
-        });
+        decoder_ctx.set_threading(threading_config);
         let decoder = decoder_ctx.decoder().video()?;
 
-        let codec = encoder::find(target.codec_id());
+        let codec = encoder::find(transcode_job_config.target.codec_id());
         let mut ost = output_ctx.add_stream(codec)?;
 
         let mut encoder_ctx =
             codec::context::Context::new_with_codec(codec.ok_or(ffmpeg_next::Error::InvalidData)?);
-        encoder_ctx.set_threading(threading::Config {
-            kind: threading::Type::Frame,
-            count: threads_per_job,
-        });
+        encoder_ctx.set_threading(threading_config);
         let mut encoder = encoder_ctx.encoder().video()?;
 
         ost.set_parameters(&encoder);
@@ -68,7 +74,7 @@ impl Transcoder {
         }
 
         let opened_encoder = encoder
-            .open_with(opts)
+            .open_with(transcode_job_config.opts.clone())
             .expect("error opening codec with supplied settings");
 
         ost.set_parameters(&opened_encoder);
@@ -78,7 +84,8 @@ impl Transcoder {
             decoder,
             input_time_base: ist.time_base(),
             encoder: opened_encoder,
-            logging_enabled: enable_logging,
+            logging_enabled: transcode_job_config.logging_enabled,
+            source_label: source_label.into(),
             frame_count: 0,
             last_log_frame_count: 0,
             starting_time: Instant::now(),
@@ -139,10 +146,16 @@ impl Transcoder {
             return;
         }
 
+        let frames_since_last_log = self.frame_count - self.last_log_frame_count;
+        let time_since_last_log = self.last_log_time.elapsed().as_secs_f64();
+        let fps = frames_since_last_log as f64 / time_since_last_log;
+
         log::info!(
-            "time elapsed: \t{:8.2}\tframe count: {:8}\ttimestamp: {:8.2}",
-            self.starting_time.elapsed().as_secs_f64(),
+            "job={} frame={} fps={:.1} elapsed={:.1}s ts={:.2}",
+            self.source_label,
             self.frame_count,
+            fps,
+            self.starting_time.elapsed().as_secs_f64(),
             timestamp
         );
         self.last_log_frame_count = self.frame_count;

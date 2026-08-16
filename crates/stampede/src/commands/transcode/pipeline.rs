@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use ffmpeg_next::{
-    Dictionary, codec, encoder,
+    codec, encoder,
     format::{
         self,
         context::{Input, Output},
@@ -11,13 +11,15 @@ use ffmpeg_next::{
 
 use ::media::video_codec::VideoCodec;
 
+use crate::commands::transcode::transcoder::TranscodeJobConfig;
+
 use super::stream_route::{StreamRoute, StreamRoutingCtx};
 use super::transcoder::{Transcoder, parse_codec_opts};
 
 pub fn transcode(
     opts: &HashMap<String, String>,
     threads_per_job: usize,
-    log_enabled: bool,
+    logging_enabled: bool,
     path: PathBuf,
     target: VideoCodec,
 ) -> Result<(), ffmpeg_next::Error> {
@@ -33,14 +35,19 @@ pub fn transcode(
 
     format::context::input::dump(&input_ctx, 0, path.to_str());
 
-    let mut stream_routing_ctx = StreamRoutingCtx::new(target, input_ctx.nb_streams());
+    let mut stream_routing_ctx = StreamRoutingCtx::new(input_ctx.nb_streams());
+    let transcode_job_config = TranscodeJobConfig {
+        threads_per_job,
+        target,
+        logging_enabled,
+        opts: codec_opts,
+    };
 
     setup_stream_mapping_and_transcoders(
-        log_enabled,
-        threads_per_job,
-        codec_opts,
+        output_file_path,
         &mut output_ctx,
         &input_ctx,
+        &transcode_job_config,
         &mut stream_routing_ctx,
     );
     write_output_header(
@@ -57,20 +64,17 @@ pub fn transcode(
 }
 
 fn eligible_input_stream_medium(input_stream_medium: &Type) -> bool {
-    let eligible_input_stream_mediums = [
-        media::Type::Video,
-        media::Type::Audio,
-        media::Type::Subtitle,
-    ];
-    eligible_input_stream_mediums.contains(input_stream_medium)
+    matches!(
+        input_stream_medium,
+        Type::Video | Type::Audio | Type::Subtitle
+    )
 }
 
-fn setup_stream_mapping_and_transcoders<'a>(
-    log_enabled: bool,
-    threads_per_job: usize,
-    codec_opts: Dictionary<'a>,
+fn setup_stream_mapping_and_transcoders(
+    source_label: &str,
     output_ctx: &mut Output,
     input_ctx: &Input,
+    transcode_job_config: &TranscodeJobConfig,
     stream_routing_ctx: &mut StreamRoutingCtx,
 ) {
     let mut output_stream_idx = 0;
@@ -81,16 +85,14 @@ fn setup_stream_mapping_and_transcoders<'a>(
         }
 
         stream_routing_ctx.routes[input_stream_idx] = if medium == media::Type::Video
-            && input_stream.parameters().id() != stream_routing_ctx.target.codec_id()
+            && input_stream.parameters().id() != transcode_job_config.target.codec_id()
         {
             let transcoder = Transcoder::new(
                 &input_stream,
-                threads_per_job,
                 output_ctx,
                 output_stream_idx as _,
-                codec_opts.to_owned(),
-                log_enabled,
-                stream_routing_ctx.target,
+                source_label,
+                transcode_job_config,
             )
             .unwrap();
             StreamRoute::Transcode {
