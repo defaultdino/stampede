@@ -31,34 +31,35 @@ pub struct Options {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[arg(long)]
     threads_per_job: Option<u8>,
-    /// folders to scan for media containers
+    /// paths to scan for media containers
     #[serde(skip_serializing_if = "Option::is_none")]
     #[arg(long)]
-    folders: Option<Vec<String>>,
+    paths: Option<Vec<String>>,
+    /// allows re-transcoding a file that's already been
+    /// through stampede, which causes additional quality loss
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(short, long)]
+    force: Option<bool>,
 }
 
 impl Options {
     pub fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
-        let config: Config = figment.extract().context("failed to extract config")?;
+        let config: Arc<Config> = Arc::new(figment.extract().context("failed to extract config")?);
+        let closure_config = config.clone();
 
         let opts = Arc::new(
             get_codec_opts(&config, config.target)
                 .cloned()
                 .unwrap_or_default(),
         );
-        let target = config.target;
-        let log_enabled = config.job.log;
 
         process_media(&config.job, move |path| {
-            match transcode(
-                &opts,
-                config.job.threads_per_job as usize,
-                log_enabled,
-                path,
-                target,
-            ) {
+            match transcode(&closure_config, &opts, path) {
                 Ok(_) => {
-                    log::info!("finished transcoding video stream to {}", target.codec_id());
+                    log::info!(
+                        "finished transcoding video stream to {}",
+                        closure_config.target.codec_id()
+                    );
                 }
                 Err(e) => {
                     log::error!("failed to transcode video stream {}", e);

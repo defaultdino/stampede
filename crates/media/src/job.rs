@@ -11,8 +11,8 @@ use crate::discover::discover_media_containers;
 pub struct JobConfig {
     pub jobs: u8,
     pub threads_per_job: u8,
-    pub folders: Vec<PathBuf>,
-    pub log: bool,
+    pub paths: Vec<PathBuf>,
+    pub logging_enabled: bool,
 }
 
 pub fn process_media<F>(config: &JobConfig, worker: F)
@@ -23,7 +23,7 @@ where
     let worker = Arc::new(worker);
 
     let discovery_handles: Vec<_> = config
-        .folders
+        .paths
         .iter()
         .cloned()
         .map(|path| {

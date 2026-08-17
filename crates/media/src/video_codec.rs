@@ -23,6 +23,15 @@ impl VideoCodec {
             VideoCodec::Vp9 => Id::VP9,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VideoCodec::H264 => "h264",
+            VideoCodec::H265 => "h265",
+            VideoCodec::Av1 => "av1",
+            VideoCodec::Vp9 => "vp9",
+        }
+    }
 }
 
 impl fmt::Display for VideoCodec {

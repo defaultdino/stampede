@@ -11,4 +11,6 @@ pub struct Config {
     pub target: VideoCodec,
     #[serde(default)]
     pub codecs: HashMap<VideoCodec, HashMap<String, String>>,
+    #[serde(default)]
+    pub force: bool,
 }

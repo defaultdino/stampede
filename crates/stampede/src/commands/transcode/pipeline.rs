@@ -11,17 +11,15 @@ use ffmpeg_next::{
 
 use ::media::video_codec::VideoCodec;
 
-use crate::commands::transcode::transcoder::TranscodeJobConfig;
+use crate::{commands::transcode::transcoder::TranscodeJobConfig, config::Config};
 
 use super::stream_route::{StreamRoute, StreamRoutingCtx};
 use super::transcoder::{Transcoder, parse_codec_opts};
 
 pub fn transcode(
+    config: &Config,
     opts: &HashMap<String, String>,
-    threads_per_job: usize,
-    logging_enabled: bool,
     path: PathBuf,
-    target: VideoCodec,
 ) -> Result<(), ffmpeg_next::Error> {
     // transcodes video stream contents in media container,
     // copies over any other container content to new container
@@ -35,15 +33,22 @@ pub fn transcode(
 
     let codec_opts = parse_codec_opts(opts);
     let mut input_ctx = format::input(&path).unwrap();
+
+    if !config.force && input_ctx.metadata().get("stampede").is_some() {
+        // if stampede already ran on this file we need to make sure it does not run again
+        // this prevents generational quality loss
+        return Err(ffmpeg_next::Error::InvalidData);
+    }
+
     let mut output_ctx = format::output(&tmp_out_path).unwrap();
 
     format::context::input::dump(&input_ctx, 0, path.to_str());
 
     let mut stream_routing_ctx = StreamRoutingCtx::new(input_ctx.nb_streams());
     let transcode_job_config = TranscodeJobConfig {
-        threads_per_job,
-        target,
-        logging_enabled,
+        threads_per_job: config.job.threads_per_job as usize,
+        target: config.target,
+        logging_enabled: config.job.logging_enabled,
         opts: codec_opts,
     };
 
@@ -55,6 +60,7 @@ pub fn transcode(
         &mut stream_routing_ctx,
     );
     write_output_header(
+        &config.target,
         &mut output_ctx,
         &input_ctx,
         tmp_out_path_str,
@@ -133,12 +139,15 @@ fn setup_stream_mapping_and_transcoders(
 }
 
 fn write_output_header(
+    target: &VideoCodec,
     output_ctx: &mut Output,
     input_ctx: &Input,
     output_file_path: &str,
     stream_routing_ctx: &mut StreamRoutingCtx,
 ) {
-    output_ctx.set_metadata(input_ctx.metadata().to_owned());
+    let mut metadata = input_ctx.metadata().to_owned();
+    metadata.set("stampede", target.as_str());
+    output_ctx.set_metadata(metadata);
     format::context::output::dump(output_ctx, 0, Some(output_file_path));
     output_ctx.write_header().unwrap();
 
@@ -160,7 +169,6 @@ fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_
             transcoder.receive_and_process_encoded_packets(output_ctx, ost_time_base);
         }
     }
-
     output_ctx.write_trailer().unwrap();
 }
 
