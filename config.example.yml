@@ -1,19 +1,24 @@
 # must be one of:
 # [ h264, h265, av1, vp9 ]
 target: "h264"
-# 
+#
 # how many files to transcode concurrently
 jobs: 2
 # internal threading value passed to libavcodec
 threads_per_job: 4
 
+# allows re-transcoding a file that's already been through
+# stampede, which causes additional quality loss
+force: true
+
 # stampede will target any and all media containers
 # under these folders
-folders:
+paths:
   - "/media/movies"
   - "/media/series"
 
-log: true
+# whether or not to show application logs
+logging_enabled: true
 
 # these are just "sane" defaults,
 # feel free to override. a codec config
