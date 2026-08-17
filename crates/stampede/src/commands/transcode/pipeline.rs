@@ -27,11 +27,15 @@ pub fn transcode(
     // copies over any other container content to new container
 
     ffmpeg_next::init().unwrap();
-    let output_file_path = path.to_str().ok_or(ffmpeg_next::Error::External)?;
+
+    let input_extension = path.extension().unwrap().to_str().unwrap();
+    let input_file_stem = path.file_stem().unwrap().to_str().unwrap();
+    let tmp_out_path = path.with_file_name(format!("{}.tmp.{}", input_file_stem, input_extension));
+    let tmp_out_path_str = tmp_out_path.to_str().unwrap();
 
     let codec_opts = parse_codec_opts(opts);
     let mut input_ctx = format::input(&path).unwrap();
-    let mut output_ctx = format::output(&path).unwrap();
+    let mut output_ctx = format::output(&tmp_out_path).unwrap();
 
     format::context::input::dump(&input_ctx, 0, path.to_str());
 
@@ -44,7 +48,7 @@ pub fn transcode(
     };
 
     setup_stream_mapping_and_transcoders(
-        output_file_path,
+        tmp_out_path_str,
         &mut output_ctx,
         &input_ctx,
         &transcode_job_config,
@@ -53,12 +57,23 @@ pub fn transcode(
     write_output_header(
         &mut output_ctx,
         &input_ctx,
-        output_file_path,
+        tmp_out_path_str,
         &mut stream_routing_ctx,
     );
 
     transcode_and_remux_packets(&mut input_ctx, &mut output_ctx, &mut stream_routing_ctx);
     flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx);
+
+    let did_nothing = stream_routing_ctx.routes.iter().any(
+        |r| matches!(r, StreamRoute::Transcode { transcoder, .. } if transcoder.frame_count == 0),
+    );
+
+    if did_nothing {
+        let _ = std::fs::remove_file(&tmp_out_path);
+        return Err(ffmpeg_next::Error::InvalidData);
+    }
+
+    std::fs::rename(&tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
 
     Ok(())
 }
@@ -162,7 +177,6 @@ fn transcode_and_remux_packets(
                 transcoder,
             } => {
                 let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
-                packet.rescale_ts(stream.time_base(), transcoder.decoder.time_base());
                 transcoder.send_packet_to_decoder(&packet);
                 transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base);
             }

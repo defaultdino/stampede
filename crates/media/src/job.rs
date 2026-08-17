@@ -32,6 +32,11 @@ where
         })
         .collect();
 
+    drop(sender);
+    for handle in discovery_handles {
+        handle.join().expect("discovery thread panicked");
+    }
+
     let worker_handles: Vec<_> = (0..config.jobs)
         .map(|_| {
             let receiver = receiver.clone();
@@ -44,12 +49,7 @@ where
         })
         .collect();
 
-    drop(sender);
     drop(receiver);
-
-    for handle in discovery_handles {
-        handle.join().expect("discovery thread panicked");
-    }
     for handle in worker_handles {
         handle.join().expect("worker thread panicked");
     }

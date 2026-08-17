@@ -1,3 +1,5 @@
 target
 .vscode
 config.y*ml
+test/
+.DS_Store

@@ -94,7 +94,13 @@ impl Transcoder {
     }
 
     pub fn send_packet_to_decoder(&mut self, packet: &Packet) {
-        self.decoder.send_packet(packet).unwrap();
+        if let Err(e) = self.decoder.send_packet(packet) {
+            log::warn!(
+                "job={} skipping undecodable packet: {}",
+                self.source_label,
+                e
+            );
+        }
     }
 
     pub fn send_eof_to_decoder(&mut self) {
