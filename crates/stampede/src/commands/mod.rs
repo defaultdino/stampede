@@ -52,7 +52,9 @@ impl Options {
             Subcommand::Transcode(opts) => {
                 from_files.admerge(Serialized::defaults(opts.overrides()))
             }
-            Subcommand::Deadroll(_) => from_files,
+            Subcommand::Deadroll(opts) => {
+                from_files.admerge(Serialized::defaults(opts.overrides()))
+            }
         }
     }
 }

@@ -11,7 +11,7 @@ anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive", "env", "suggestions"] }
 crossbeam-channel = "0.5.16"
 env_logger = "0.11.11"
-ffmpeg-next = { version = "9.0.0" }
+ffmpeg-next = { version = "9.0.0", features = ["filter"] }
 figment = { version = "0.10.19", features = ["env", "test", "yaml"] }
 log = "0.4.33"
 media = { path = "crates/media" }
