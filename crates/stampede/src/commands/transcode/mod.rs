@@ -99,7 +99,7 @@ impl Options {
                     );
                 }
                 Err(e) => {
-                    log::error!("failed to transcode video stream {}", e);
+                    log::error!("failed to transcode video stream(s): {}", e);
                 }
             }
         });

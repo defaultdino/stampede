@@ -16,11 +16,22 @@ use crate::{commands::transcode::transcoder::TranscodeJobConfig, config::Config}
 use super::stream_route::{StreamRoute, StreamRoutingCtx};
 use super::transcoder::{Transcoder, parse_codec_opts};
 
+const STAMPEDE_METADATA_KEY: &str = "STAMPEDE";
+
+#[derive(thiserror::Error, Debug)]
+pub enum TranscodeError {
+    #[error("video streams in this container have already been transcoded")]
+    AlreadyTranscoded,
+
+    #[error(transparent)]
+    Ffmpeg(#[from] ffmpeg_next::Error),
+}
+
 pub fn transcode(
     config: &Config,
     opts: &HashMap<String, String>,
     path: PathBuf,
-) -> Result<(), ffmpeg_next::Error> {
+) -> Result<(), TranscodeError> {
     // transcodes video stream contents in media container,
     // copies over any other container content to new container
 
@@ -34,10 +45,10 @@ pub fn transcode(
     let codec_opts = parse_codec_opts(opts);
     let mut input_ctx = format::input(&path).unwrap();
 
-    if !config.transcode.force && input_ctx.metadata().get("stampede").is_some() {
+    if !config.transcode.force && input_ctx.metadata().get(STAMPEDE_METADATA_KEY).is_some() {
         // if stampede already ran on this file we need to make sure it does not run again
         // this prevents generational quality loss
-        return Err(ffmpeg_next::Error::InvalidData);
+        return Err(TranscodeError::AlreadyTranscoded);
     }
 
     let mut output_ctx = format::output(&tmp_out_path).unwrap();
@@ -76,7 +87,7 @@ pub fn transcode(
 
     if did_nothing {
         let _ = std::fs::remove_file(&tmp_out_path);
-        return Err(ffmpeg_next::Error::InvalidData);
+        return Err(TranscodeError::Ffmpeg(ffmpeg_next::Error::InvalidData));
     }
 
     std::fs::rename(&tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
@@ -146,7 +157,7 @@ fn write_output_header(
     stream_routing_ctx: &mut StreamRoutingCtx,
 ) {
     let mut metadata = input_ctx.metadata().to_owned();
-    metadata.set("stampede", target.as_str());
+    metadata.set(STAMPEDE_METADATA_KEY, target.as_str());
     output_ctx.set_metadata(metadata);
     format::context::output::dump(output_ctx, 0, Some(output_file_path));
     output_ctx.write_header().unwrap();
