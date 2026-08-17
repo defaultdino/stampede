@@ -12,7 +12,6 @@ pub struct JobConfig {
     pub jobs: u8,
     pub threads_per_job: u8,
     pub paths: Vec<PathBuf>,
-    pub logging_enabled: bool,
 }
 
 pub fn process_media<F>(config: &JobConfig, worker: F)

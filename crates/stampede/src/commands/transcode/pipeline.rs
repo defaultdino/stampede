@@ -34,7 +34,7 @@ pub fn transcode(
     let codec_opts = parse_codec_opts(opts);
     let mut input_ctx = format::input(&path).unwrap();
 
-    if !config.force && input_ctx.metadata().get("stampede").is_some() {
+    if !config.transcode.force && input_ctx.metadata().get("stampede").is_some() {
         // if stampede already ran on this file we need to make sure it does not run again
         // this prevents generational quality loss
         return Err(ffmpeg_next::Error::InvalidData);
@@ -46,9 +46,9 @@ pub fn transcode(
 
     let mut stream_routing_ctx = StreamRoutingCtx::new(input_ctx.nb_streams());
     let transcode_job_config = TranscodeJobConfig {
-        threads_per_job: config.job.threads_per_job as usize,
-        target: config.target,
-        logging_enabled: config.job.logging_enabled,
+        threads_per_job: config.processing.threads_per_job as usize,
+        target: config.transcode.target,
+        logging_enabled: config.logging.enabled,
         opts: codec_opts,
     };
 
@@ -60,7 +60,7 @@ pub fn transcode(
         &mut stream_routing_ctx,
     );
     write_output_header(
-        &config.target,
+        &config.transcode.target,
         &mut output_ctx,
         &input_ctx,
         tmp_out_path_str,

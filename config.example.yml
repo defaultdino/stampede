@@ -1,47 +1,49 @@
-# must be one of:
-# [ h264, h265, av1, vp9 ]
-target: "h264"
-#
-# how many files to transcode concurrently
-jobs: 2
-# internal threading value passed to libavcodec
-threads_per_job: 4
+transcode:
+  # must be one of:
+  # [ h264, h265, av1, vp9 ]
+  target: "h264"
 
-# allows re-transcoding a file that's already been through
-# stampede, which causes additional quality loss
-force: true
+  # allows re-transcoding a file that's already been
+  # through stampede, which causes additional quality loss
+  force: true
 
-# stampede will target any and all media containers
-# under these folders
-paths:
-  - "/media/movies"
-  - "/media/series"
+  # these are just "sane" defaults,
+  # feel free to override. a codec config
+  # is expected to exist for the target you set
+  codecs:
+    h264:
+      preset: "medium"
+      crf: "23"
+      profile: "high"
+      tune: "film"
 
-# whether or not to show application logs
-logging_enabled: true
+    h265:
+      preset: "medium"
+      crf: "28"
+      profile: "main"
 
-# these are just "sane" defaults,
-# feel free to override. a codec config
-# is expected to exist for the target you set
-codecs:
-  h264:
-    preset: "medium"
-    crf: "23"
-    profile: "high"
-    tune: "film"
+    av1:
+      preset: "8"
+      crf: "30"
+      cpu-used: "8"
 
-  h265:
-    preset: "medium"
-    crf: "28"
-    profile: "main"
+    vp9:
+      crf: "31"
+      b: "0"
+      deadline: "good"
+      cpu-used: "2"
 
-  av1:
-    preset: "8"
-    crf: "30"
-    cpu-used: "8"
+processing:
+  # how many files to transcode concurrently
+  jobs: 2
+  # internal threading value passed to libavcodec
+  threads_per_job: 4
+  # stampede will target any and all media containers
+  # under these folders
+  paths:
+    - "/media/movies"
+    - "/media/series"
 
-  vp9:
-    crf: "31"
-    b: "0"
-    deadline: "good"
-    cpu-used: "2"
+logging:
+  # whether or not to show application logs
+  enabled: true

@@ -49,7 +49,9 @@ impl Options {
             .fold(base, |f, path| f.admerge(Yaml::file(path)));
 
         match &self.subcommand {
-            Subcommand::Transcode(opts) => from_files.admerge(Serialized::defaults(opts)),
+            Subcommand::Transcode(opts) => {
+                from_files.admerge(Serialized::defaults(opts.overrides()))
+            }
             Subcommand::Deadroll(_) => from_files,
         }
     }
@@ -66,7 +68,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "config.yaml",
-                "target: vp9\njobs: 2\nthreads_per_job: 4\nfolders: []\nlog: false",
+                "transcode:\n  target: vp9\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
             )?;
 
             let opts = Options::try_parse_from([
@@ -80,7 +82,31 @@ mod tests {
             .unwrap();
             let config: Config = opts.figment().extract().unwrap();
 
-            assert_eq!(config.target, VideoCodec::H264);
+            assert_eq!(config.transcode.target, VideoCodec::H264);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn cli_jobs_overrides_yaml_processing_section() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "config.yaml",
+                "transcode:\n  target: vp9\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
+            )?;
+
+            let opts = Options::try_parse_from([
+                "stampede",
+                "transcode",
+                "--config",
+                "config.yaml",
+                "--jobs",
+                "7",
+            ])
+            .unwrap();
+            let config: Config = opts.figment().extract().unwrap();
+
+            assert_eq!(config.processing.jobs, 7);
             Ok(())
         });
     }
@@ -90,14 +116,14 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "custom.yaml",
-                "target: h264\njobs: 1\nthreads_per_job: 1\nfolders: []\nlog: false",
+                "transcode:\n  target: h264\nprocessing:\n  jobs: 1\n  threads_per_job: 1\n  paths: []",
             )?;
             jail.set_env("STAMPEDE_CONFIG", "custom.yaml");
 
             let opts = Options::try_parse_from(["stampede", "transcode"]).unwrap();
             let config: Config = opts.figment().extract().unwrap();
 
-            assert_eq!(config.target, VideoCodec::H264);
+            assert_eq!(config.transcode.target, VideoCodec::H264);
             Ok(())
         });
     }
@@ -107,7 +133,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "config.yaml",
-                "jobs: 2\nthreads_per_job: 4\nfolders: []\nlog: false",
+                "processing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
             )?;
             let opts =
                 Options::try_parse_from(["stampede", "transcode", "--config", "config.yaml"])
