@@ -1,98 +1,210 @@
-use ffmpeg_next::{Packet, Rational, codec, decoder, filter, format, frame};
+use ffmpeg_next::{Frame, Packet, Rational, codec, decoder, filter, format, frame, threading};
 
 use crate::commands::deadroll::filter::{audio_filter, video_filter};
 
-pub trait AnalysisDecoder {
-    type Frame: EmptyFrame;
-
-    fn decode_packet(&mut self, packet: &Packet) -> Result<(), ffmpeg_next::Error>;
-    fn decode_frame(&mut self, frame: &mut Self::Frame) -> Result<(), ffmpeg_next::Error>;
-
-    fn feed_packet(&mut self, filter: &mut filter::Graph, packet: &Packet) {
-        if self.decode_packet(packet).is_err() {
-            return;
-        }
-        let mut frame = Self::Frame::empty();
-        while self.decode_frame(&mut frame).is_ok() {
-            // push into filter, read metadata back out — this part can also be generic
-            // if you give AnalysisDecoder a method for "push frame into a filter::graph::Source"
-        }
-    }
+pub struct DetectionKeys {
+    pub start_key: &'static str,
+    pub end_key: &'static str,
 }
 
-pub trait EmptyFrame {
-    fn empty() -> Self;
-}
-
-impl EmptyFrame for frame::Video {
-    fn empty() -> Self {
-        frame::Video::empty()
-    }
-}
-
-impl EmptyFrame for frame::Audio {
-    fn empty() -> Self {
-        frame::Audio::empty()
-    }
-}
-
-impl AnalysisDecoder for decoder::Video {
-    type Frame = frame::Video;
-
-    fn decode_packet(&mut self, packet: &Packet) -> Result<(), ffmpeg_next::Error> {
-        self.send_packet(packet)
-    }
-
-    fn decode_frame(&mut self, frame: &mut Self::Frame) -> Result<(), ffmpeg_next::Error> {
-        self.receive_frame(frame)
-    }
-}
-
-impl AnalysisDecoder for decoder::Audio {
-    type Frame = frame::Audio;
-
-    fn decode_packet(&mut self, packet: &Packet) -> Result<(), ffmpeg_next::Error> {
-        self.send_packet(packet)
-    }
-
-    fn decode_frame(&mut self, frame: &mut Self::Frame) -> Result<(), ffmpeg_next::Error> {
-        self.receive_frame(frame)
-    }
-}
+const BLACK_KEYS: DetectionKeys = DetectionKeys {
+    start_key: "lavfi.black_start",
+    end_key: "lavfi.black_end",
+};
+const SILENCE_KEYS: DetectionKeys = DetectionKeys {
+    start_key: "lavfi.silence_start",
+    end_key: "lavfi.silence_end",
+};
 
 pub struct FilterContext {
     pub stream_index: usize,
     pub filter: filter::Graph,
-    pub in_time_base: Rational,
+    pub ranges: Vec<(f64, f64)>,
+    pub pending_start: Option<f64>,
 }
 
 pub struct VideoAnalysisPipeline {
-    decoder: decoder::Video,
-    common: FilterContext,
+    pub decoder: decoder::Video,
+    pub common: FilterContext,
+    pub keys: DetectionKeys,
+
+    last_seen_ts: i64,
+}
+
+impl VideoAnalysisPipeline {
+    fn check_metadata(&mut self, filtered: &Frame) {
+        if let Some(start) = filtered.metadata().get(self.keys.start_key) {
+            self.common.pending_start = start.parse().ok();
+        }
+        if let Some(end) = filtered.metadata().get(self.keys.end_key)
+            && let (Some(start), Ok(end)) = (self.common.pending_start.take(), end.parse())
+        {
+            self.common.ranges.push((start, end));
+        }
+    }
+
+    fn has_frames(&mut self, frame: &mut Frame) -> bool {
+        self.common
+            .filter
+            .get("out")
+            .unwrap()
+            .sink()
+            .frame(frame)
+            .is_ok()
+    }
+
+    fn process_decoded_frame(&mut self, frame: &frame::Video) {
+        if let Some(ts) = frame.timestamp() {
+            self.last_seen_ts = ts;
+        }
+        self.common
+            .filter
+            .get("in")
+            .unwrap()
+            .source()
+            .add(frame)
+            .unwrap();
+
+        let mut filtered = frame::Video::empty();
+        while self.has_frames(&mut filtered) {
+            self.check_metadata(&filtered);
+        }
+    }
+
+    pub fn flush(&mut self) {
+        let _ = self.decoder.send_eof();
+
+        let mut frame = frame::Video::empty();
+        while self.decoder.receive_frame(&mut frame).is_ok() {
+            self.process_decoded_frame(&frame);
+        }
+
+        let _ = self.common.filter.get("in").unwrap().source().flush();
+        let mut filtered = frame::Video::empty();
+        while self.has_frames(&mut filtered) {
+            self.check_metadata(&filtered);
+        }
+
+        if let Some(start) = self.common.pending_start.take() {
+            let end_secs =
+                f64::from(Rational(self.last_seen_ts as i32, 1) * self.decoder.time_base());
+            self.common.ranges.push((start, end_secs));
+        }
+    }
+
+    pub fn feed_packet(&mut self, packet: &Packet) {
+        if self.decoder.send_packet(packet).is_err() {
+            return;
+        }
+
+        let mut frame = frame::Video::empty();
+        while self.decoder.receive_frame(&mut frame).is_ok() {
+            self.process_decoded_frame(&frame);
+        }
+    }
 }
 
 pub struct AudioAnalysisPipeline {
-    decoder: decoder::Audio,
-    common: FilterContext,
+    pub decoder: decoder::Audio,
+    pub common: FilterContext,
+    pub keys: DetectionKeys,
+    last_seen_ts: i64,
+}
+
+impl AudioAnalysisPipeline {
+    fn check_metadata(&mut self, filtered: &Frame) {
+        if let Some(start) = filtered.metadata().get(self.keys.start_key) {
+            self.common.pending_start = start.parse().ok();
+        }
+        if let Some(end) = filtered.metadata().get(self.keys.end_key)
+            && let (Some(start), Ok(end)) = (self.common.pending_start.take(), end.parse())
+        {
+            self.common.ranges.push((start, end));
+        }
+    }
+
+    fn has_frames(&mut self, frame: &mut Frame) -> bool {
+        self.common
+            .filter
+            .get("out")
+            .unwrap()
+            .sink()
+            .frame(frame)
+            .is_ok()
+    }
+
+    fn process_decoded_frame(&mut self, frame: &frame::Video) {
+        if let Some(ts) = frame.timestamp() {
+            self.last_seen_ts = ts;
+        }
+        self.common
+            .filter
+            .get("in")
+            .unwrap()
+            .source()
+            .add(frame)
+            .unwrap();
+
+        let mut filtered = frame::Video::empty();
+        while self.has_frames(&mut filtered) {
+            self.check_metadata(&filtered);
+        }
+    }
+
+    pub fn flush(&mut self) {
+        let _ = self.decoder.send_eof();
+
+        let mut frame = frame::Video::empty();
+        while self.decoder.receive_frame(&mut frame).is_ok() {
+            self.process_decoded_frame(&frame);
+        }
+
+        let _ = self.common.filter.get("in").unwrap().source().flush();
+        let mut filtered = frame::Video::empty();
+        while self.has_frames(&mut filtered) {
+            self.check_metadata(&filtered);
+        }
+
+        if let Some(start) = self.common.pending_start.take() {
+            let end_secs =
+                f64::from(Rational(self.last_seen_ts as i32, 1) * self.decoder.time_base());
+            self.common.ranges.push((start, end_secs));
+        }
+    }
+
+    pub fn feed_packet(&mut self, packet: &Packet) {
+        if self.decoder.send_packet(packet).is_err() {
+            return;
+        }
+
+        let mut frame = frame::Video::empty();
+        while self.decoder.receive_frame(&mut frame).is_ok() {
+            self.process_decoded_frame(&frame);
+        }
+    }
 }
 
 pub struct AnalysisJobConfig {
     pub threads_per_job: usize,
-    pub logging_enabled: bool,
 }
 
 pub fn build_video_pipeline(
     ictx: &format::context::Input,
+    analysis_job_config: &AnalysisJobConfig,
     stream_index: usize,
     filter_spec: &str,
 ) -> Result<VideoAnalysisPipeline, ffmpeg_next::Error> {
     let stream = ictx
         .stream(stream_index)
         .ok_or(ffmpeg_next::Error::StreamNotFound)?;
-    let decoder = codec::context::Context::from_parameters(stream.parameters())?
-        .decoder()
-        .video()?;
-    
+    let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
+    decoder_ctx.set_threading(threading::Config {
+        kind: threading::Type::Frame,
+        count: analysis_job_config.threads_per_job,
+    });
+
+    let decoder = decoder_ctx.decoder().video()?;
+
     let filter = video_filter(filter_spec, &decoder)?;
 
     Ok(VideoAnalysisPipeline {
@@ -100,22 +212,30 @@ pub fn build_video_pipeline(
         common: FilterContext {
             stream_index,
             filter,
-            in_time_base: stream.time_base(),
+            ranges: Vec::new(),
+            pending_start: None,
         },
+        last_seen_ts: 0,
+        keys: BLACK_KEYS,
     })
 }
 
 pub fn build_audio_pipeline(
     ictx: &format::context::Input,
+    analysis_job_config: &AnalysisJobConfig,
     stream_index: usize,
     filter_spec: &str,
 ) -> Result<AudioAnalysisPipeline, ffmpeg_next::Error> {
     let stream = ictx
         .stream(stream_index)
         .ok_or(ffmpeg_next::Error::StreamNotFound)?;
-    let decoder = codec::context::Context::from_parameters(stream.parameters())?
-        .decoder()
-        .audio()?;
+    let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
+    decoder_ctx.set_threading(threading::Config {
+        kind: threading::Type::Frame,
+        count: analysis_job_config.threads_per_job,
+    });
+
+    let decoder = decoder_ctx.decoder().audio()?;
 
     let filter = audio_filter(filter_spec, &decoder)?;
 
@@ -124,8 +244,10 @@ pub fn build_audio_pipeline(
         common: FilterContext {
             stream_index,
             filter,
-            in_time_base: stream.time_base(),
+            ranges: Vec::new(),
+            pending_start: None,
         },
+        last_seen_ts: 0,
+        keys: SILENCE_KEYS,
     })
 }
-

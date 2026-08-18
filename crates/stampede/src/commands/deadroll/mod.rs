@@ -6,7 +6,9 @@ use serde::Serialize;
 use std::{process::ExitCode, sync::Arc};
 
 use crate::{
-    commands::{ForceOptions, ProcessingOptions, ProcessingOverrides, deadroll::pipeline::deadroll},
+    commands::{
+        ForceOptions, ProcessingOptions, ProcessingOverrides, deadroll::pipeline::deadroll,
+    },
     config::Config,
 };
 
@@ -71,18 +73,4 @@ impl Options {
 
         Ok(ExitCode::SUCCESS)
     }
-}
-
-fn intersect_ranges(a: &[(i64, i64)], b: &[(i64, i64)]) -> Vec<(i64, i64)> {
-    let mut result = Vec::new();
-    for &(a_start, a_end) in a {
-        for &(b_start, b_end) in b {
-            let start = a_start.max(b_start);
-            let end = a_end.min(b_end);
-            if start < end {
-                result.push((start, end));
-            }
-        }
-    }
-    result
 }
