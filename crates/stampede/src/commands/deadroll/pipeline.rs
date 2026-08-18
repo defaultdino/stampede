@@ -42,12 +42,12 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
             let video_stream = input_ctx
                 .streams()
                 .best(media::Type::Video)
-                .expect("could not find best video stream");
+                .ok_or(ffmpeg_next::Error::StreamNotFound)?;
 
             let audio_stream = input_ctx
                 .streams()
                 .best(media::Type::Audio)
-                .expect("could not find best audio stream");
+                .ok_or(ffmpeg_next::Error::StreamNotFound)?;
 
             let video_filter_spec = format!("blackdetect=d={}", config.deadroll.min_duration);
             let audio_filter_spec = format!(

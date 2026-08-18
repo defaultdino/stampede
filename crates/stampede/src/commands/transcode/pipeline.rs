@@ -55,7 +55,7 @@ pub fn transcode(
                 &input_ctx,
                 &transcode_job_config,
                 &mut stream_routing_ctx,
-            );
+            )?;
 
             stream_routing_ctx.output_time_bases = stamp_and_write_output_header(
                 STAMPEDE_TRANSCODE,
@@ -97,7 +97,7 @@ fn setup_stream_mapping_and_transcoders(
     input_ctx: &Input,
     transcode_job_config: &TranscodeJobConfig,
     stream_routing_ctx: &mut StreamRoutingCtx,
-) {
+) -> Result<(), TranscodeError>{
     let mut output_stream_idx = 0;
     for (input_stream_idx, input_stream) in input_ctx.streams().enumerate() {
         let medium = input_stream.parameters().medium();
@@ -122,8 +122,7 @@ fn setup_stream_mapping_and_transcoders(
             }
         } else {
             let mut output_stream = output_ctx
-                .add_stream(encoder::find(codec::Id::None))
-                .unwrap();
+                .add_stream(encoder::find(codec::Id::None))?;
             output_stream.set_parameters(input_stream.parameters());
             unsafe {
                 (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
@@ -136,6 +135,8 @@ fn setup_stream_mapping_and_transcoders(
 
         output_stream_idx += 1;
     }
+
+    Ok(())
 }
 
 fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_ctx: &mut Output) {
