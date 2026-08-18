@@ -6,6 +6,8 @@ use figment::{
     Figment,
     providers::{Env, Format, Serialized, Yaml},
 };
+use serde::Serialize;
+use std::io::Write;
 pub mod deadroll;
 pub mod transcode;
 
@@ -17,12 +19,80 @@ enum Subcommand {
     Deadroll(self::deadroll::Options),
 }
 
+#[derive(Serialize)]
+struct ProcessingOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jobs: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threads_per_job: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paths: Option<Vec<String>>,
+}
+
+/// processing-related CLI flags shared by every subcommand, flattened into
+/// each subcommand's `Options` so they aren't redefined per-command.
+#[derive(clap::Args, Debug)]
+pub struct ProcessingOptions {
+    /// number of jobs to perform concurrently
+    #[arg(short, long)]
+    jobs: Option<u8>,
+    /// number of threads to utilize per concurrent job
+    #[arg(long)]
+    threads_per_job: Option<u8>,
+    /// paths to scan for media containers
+    #[arg(long)]
+    paths: Option<Vec<String>>,
+}
+
+impl ProcessingOptions {
+    fn overrides(&self) -> ProcessingOverrides {
+        ProcessingOverrides {
+            jobs: self.jobs,
+            threads_per_job: self.threads_per_job,
+            paths: self.paths.clone(),
+        }
+    }
+}
+
+/// force flag shared by every subcommand, flattened into each subcommand's
+/// `Options` so it's defined once but still scoped per-subcommand invocation.
+#[derive(clap::Args, Debug)]
+pub struct ForceOptions {
+    /// allows re-processing a file that's already been through stampede
+    /// for this subcommand, which can cause additional quality loss
+    #[arg(short, long)]
+    force: Option<bool>,
+}
+
+impl ForceOptions {
+    fn overrides(&self) -> Option<bool> {
+        self.force
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct Options {
     #[arg(short, long, global = true, action = clap::ArgAction::Append)]
     config: Vec<PathBuf>,
     #[command(subcommand)]
     subcommand: Subcommand,
+}
+
+pub fn setup_logging() {
+    env_logger::Builder::new()
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "time={} level={} target={} msg=\"{}\"",
+                chrono::Utc::now().to_rfc3339(),
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .init();
+
+    ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Fatal);
 }
 
 impl Options {
@@ -48,11 +118,15 @@ impl Options {
             .into_iter()
             .fold(base, |f, path| f.admerge(Yaml::file(path)));
 
+
+
         match &self.subcommand {
             Subcommand::Transcode(opts) => {
                 from_files.admerge(Serialized::defaults(opts.overrides()))
             }
-            Subcommand::Deadroll(_) => from_files,
+            Subcommand::Deadroll(opts) => {
+                from_files.admerge(Serialized::defaults(opts.overrides()))
+            }
         }
     }
 }
@@ -68,7 +142,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "config.yaml",
-                "transcode:\n  target: vp9\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
+                "transcode:\n  target: vp9\nblackroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
             )?;
 
             let opts = Options::try_parse_from([
@@ -92,7 +166,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "config.yaml",
-                "transcode:\n  target: vp9\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
+                "transcode:\n  target: vp9\nblackroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
             )?;
 
             let opts = Options::try_parse_from([
@@ -116,7 +190,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "custom.yaml",
-                "transcode:\n  target: h264\nprocessing:\n  jobs: 1\n  threads_per_job: 1\n  paths: []",
+                "transcode:\n  target: h264\nblackroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 1\n  threads_per_job: 1\n  paths: []",
             )?;
             jail.set_env("STAMPEDE_CONFIG", "custom.yaml");
 

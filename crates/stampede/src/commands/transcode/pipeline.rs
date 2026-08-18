@@ -9,14 +9,12 @@ use ffmpeg_next::{
     media::{self, Type},
 };
 
-use ::media::video_codec::VideoCodec;
+use ::media::io::{STAMPEDE_TRANSCODE, open_media_ctx, stamp_and_write_output_header};
 
 use crate::{commands::transcode::transcoder::TranscodeJobConfig, config::Config};
 
 use super::stream_route::{StreamRoute, StreamRoutingCtx};
 use super::transcoder::{Transcoder, parse_codec_opts};
-
-const STAMPEDE_METADATA_KEY: &str = "STAMPEDE";
 
 #[derive(thiserror::Error, Debug)]
 pub enum TranscodeError {
@@ -32,67 +30,58 @@ pub fn transcode(
     opts: &HashMap<String, String>,
     path: PathBuf,
 ) -> Result<(), TranscodeError> {
-    // transcodes video stream contents in media container,
-    // copies over any other container content to new container
-
-    ffmpeg_next::init().unwrap();
-
-    let input_extension = path.extension().unwrap().to_str().unwrap();
-    let input_file_stem = path.file_stem().unwrap().to_str().unwrap();
-    let tmp_out_path = path.with_file_name(format!("{}.tmp.{}", input_file_stem, input_extension));
-    let tmp_out_path_str = tmp_out_path.to_str().unwrap();
-
     let codec_opts = parse_codec_opts(opts);
-    let mut input_ctx = format::input(&path).unwrap();
 
-    if !config.transcode.force && input_ctx.metadata().get(STAMPEDE_METADATA_KEY).is_some() {
-        // if stampede already ran on this file we need to make sure it does not run again
-        // this prevents generational quality loss
-        return Err(TranscodeError::AlreadyTranscoded);
-    }
+    open_media_ctx(
+        &path,
+        config.transcode.force,
+        STAMPEDE_TRANSCODE,
+        || TranscodeError::AlreadyTranscoded,
+        |mut input_ctx, mut output_ctx, tmp_out_path| {
+            let tmp_out_path_str = tmp_out_path.to_str().unwrap();
 
-    let mut output_ctx = format::output(&tmp_out_path).unwrap();
+            format::context::input::dump(&input_ctx, 0, path.to_str());
 
-    format::context::input::dump(&input_ctx, 0, path.to_str());
+            let mut stream_routing_ctx = StreamRoutingCtx::new(input_ctx.nb_streams());
+            let transcode_job_config = TranscodeJobConfig {
+                threads_per_job: config.processing.threads_per_job as usize,
+                target: config.transcode.target,
+                opts: codec_opts,
+            };
 
-    let mut stream_routing_ctx = StreamRoutingCtx::new(input_ctx.nb_streams());
-    let transcode_job_config = TranscodeJobConfig {
-        threads_per_job: config.processing.threads_per_job as usize,
-        target: config.transcode.target,
-        logging_enabled: config.logging.enabled,
-        opts: codec_opts,
-    };
+            setup_stream_mapping_and_transcoders(
+                tmp_out_path_str,
+                &mut output_ctx,
+                &input_ctx,
+                &transcode_job_config,
+                &mut stream_routing_ctx,
+            );
 
-    setup_stream_mapping_and_transcoders(
-        tmp_out_path_str,
-        &mut output_ctx,
-        &input_ctx,
-        &transcode_job_config,
-        &mut stream_routing_ctx,
-    );
-    write_output_header(
-        &config.transcode.target,
-        &mut output_ctx,
-        &input_ctx,
-        tmp_out_path_str,
-        &mut stream_routing_ctx,
-    );
+            stream_routing_ctx.output_time_bases = stamp_and_write_output_header(
+                STAMPEDE_TRANSCODE,
+                config.transcode.target.as_str(),
+                &mut output_ctx,
+                &input_ctx,
+                Some(tmp_out_path_str),
+            );
 
-    transcode_and_remux_packets(&mut input_ctx, &mut output_ctx, &mut stream_routing_ctx);
-    flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx);
+            transcode_and_remux_packets(&mut input_ctx, &mut output_ctx, &mut stream_routing_ctx);
+            flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx);
 
-    let did_nothing = stream_routing_ctx.routes.iter().any(
-        |r| matches!(r, StreamRoute::Transcode { transcoder, .. } if transcoder.frame_count == 0),
-    );
+            let did_nothing = stream_routing_ctx.routes.iter().any(
+                |r| matches!(r, StreamRoute::Transcode { transcoder, .. } if transcoder.frame_count == 0),
+            );
 
-    if did_nothing {
-        let _ = std::fs::remove_file(&tmp_out_path);
-        return Err(TranscodeError::Ffmpeg(ffmpeg_next::Error::InvalidData));
-    }
+            if did_nothing {
+                let _ = std::fs::remove_file(tmp_out_path);
+                return Err(TranscodeError::Ffmpeg(ffmpeg_next::Error::InvalidData));
+            }
 
-    std::fs::rename(&tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
+            std::fs::rename(tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
 
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 fn eligible_input_stream_medium(input_stream_medium: &Type) -> bool {
@@ -147,23 +136,6 @@ fn setup_stream_mapping_and_transcoders(
 
         output_stream_idx += 1;
     }
-}
-
-fn write_output_header(
-    target: &VideoCodec,
-    output_ctx: &mut Output,
-    input_ctx: &Input,
-    output_file_path: &str,
-    stream_routing_ctx: &mut StreamRoutingCtx,
-) {
-    let mut metadata = input_ctx.metadata().to_owned();
-    metadata.set(STAMPEDE_METADATA_KEY, target.as_str());
-    output_ctx.set_metadata(metadata);
-    format::context::output::dump(output_ctx, 0, Some(output_file_path));
-    output_ctx.write_header().unwrap();
-
-    stream_routing_ctx.output_time_bases =
-        output_ctx.streams().map(|ost| ost.time_base()).collect();
 }
 
 fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_ctx: &mut Output) {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use ffmpeg_next::{
     Dictionary, Packet, Rational, codec, decoder, encoder, format, frame, picture, threading,
@@ -14,18 +14,13 @@ pub struct Transcoder {
     pub decoder: decoder::Video,
     pub input_time_base: Rational,
     pub encoder: encoder::Video,
-    pub logging_enabled: bool,
     pub source_label: String,
     pub frame_count: usize,
-    pub last_log_frame_count: usize,
-    pub starting_time: Instant,
-    pub last_log_time: Instant,
 }
 
 pub struct TranscodeJobConfig<'a> {
     pub threads_per_job: usize,
     pub target: VideoCodec,
-    pub logging_enabled: bool,
     pub opts: Dictionary<'a>,
 }
 
@@ -84,12 +79,8 @@ impl Transcoder {
             decoder,
             input_time_base: ist.time_base(),
             encoder: opened_encoder,
-            logging_enabled: transcode_job_config.logging_enabled,
             source_label: source_label.into(),
             frame_count: 0,
-            last_log_frame_count: 0,
-            starting_time: Instant::now(),
-            last_log_time: Instant::now(),
         })
     }
 
@@ -137,41 +128,11 @@ impl Transcoder {
         while self.decoder.receive_frame(&mut frame).is_ok() {
             self.frame_count += 1;
             let timestamp = frame.timestamp();
-            self.log(f64::from(
-                Rational(timestamp.unwrap_or(0) as i32, 1) * self.decoder.time_base(),
-            ));
             frame.set_pts(timestamp);
             frame.set_kind(picture::Type::None);
             self.send_frame_to_encoder(&frame);
             self.receive_and_process_encoded_packets(octx, ost_time_base);
         }
-    }
-
-    pub fn log(&mut self, timestamp: f64) {
-        if !self.logging_enabled_and_eligible() {
-            return;
-        }
-
-        let frames_since_last_log = self.frame_count - self.last_log_frame_count;
-        let time_since_last_log = self.last_log_time.elapsed().as_secs_f64();
-        let fps = frames_since_last_log as f64 / time_since_last_log;
-
-        log::info!(
-            "job={} frame={} fps={:.1} elapsed={:.1}s ts={:.2}",
-            self.source_label,
-            self.frame_count,
-            fps,
-            self.starting_time.elapsed().as_secs_f64(),
-            timestamp
-        );
-        self.last_log_frame_count = self.frame_count;
-        self.last_log_time = Instant::now();
-    }
-
-    fn logging_enabled_and_eligible(&mut self) -> bool {
-        self.logging_enabled
-            && (self.frame_count - self.last_log_frame_count >= 100
-                || self.last_log_time.elapsed().as_secs_f64() >= 1.0)
     }
 }
 
