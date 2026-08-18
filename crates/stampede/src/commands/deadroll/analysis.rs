@@ -198,6 +198,7 @@ pub fn build_video_pipeline(
         .stream(stream_index)
         .ok_or(ffmpeg_next::Error::StreamNotFound)?;
     let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
+    decoder_ctx.set_time_base(stream.time_base());
     decoder_ctx.set_threading(threading::Config {
         kind: threading::Type::Frame,
         count: analysis_job_config.threads_per_job,
@@ -230,6 +231,7 @@ pub fn build_audio_pipeline(
         .stream(stream_index)
         .ok_or(ffmpeg_next::Error::StreamNotFound)?;
     let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
+    decoder_ctx.set_time_base(stream.time_base());
     decoder_ctx.set_threading(threading::Config {
         kind: threading::Type::Frame,
         count: analysis_job_config.threads_per_job,

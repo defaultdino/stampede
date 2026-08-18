@@ -50,8 +50,6 @@ pub fn stamp_and_write_output_header(
     }
 
     output_ctx.write_header().unwrap();
-
-    
     output_ctx.streams().map(|ost| ost.time_base()).collect()
 }
 

@@ -7,6 +7,7 @@ use figment::{
     providers::{Env, Format, Serialized, Yaml},
 };
 use serde::Serialize;
+use std::io::Write;
 pub mod deadroll;
 pub mod transcode;
 
@@ -77,6 +78,23 @@ pub struct Options {
     subcommand: Subcommand,
 }
 
+pub fn setup_logging() {
+    env_logger::Builder::new()
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "time={} level={} target={} msg=\"{}\"",
+                chrono::Utc::now().to_rfc3339(),
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .init();
+
+    ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Fatal);
+}
+
 impl Options {
     pub fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
         match self.subcommand {
@@ -99,6 +117,8 @@ impl Options {
         let from_files = configs
             .into_iter()
             .fold(base, |f, path| f.admerge(Yaml::file(path)));
+
+
 
         match &self.subcommand {
             Subcommand::Transcode(opts) => {

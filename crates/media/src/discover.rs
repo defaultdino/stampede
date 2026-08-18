@@ -19,14 +19,10 @@ pub fn discover_media_containers(s: &Sender<PathBuf>, media_path: PathBuf) {
     }
     visit(path, &mut |p| match s.send(p.clone()) {
         Ok(_) => {
-            log::info!("added {} to transcoding queue", p.display());
+            log::info!("added {} to queue", p.display());
         }
         Err(e) => {
-            log::info!(
-                "skipped adding {} to transcoding queue due to error: {}",
-                path.display(),
-                e
-            );
+            log::info!("skipped adding {} to queue: {}", path.display(), e);
         }
     })
     .unwrap();
