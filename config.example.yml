@@ -33,7 +33,7 @@ transcode:
       deadline: "good"
       cpu-used: "2"
 
-blackroll:
+deadroll:
   # minimum duration, in seconds, of black/silence for a
   # segment to be treated as dead roll
   min_duration: 2

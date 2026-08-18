@@ -16,7 +16,7 @@ pub struct TranscodeConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BlackrollConfig {
+pub struct DeadrollConfig {
     pub min_duration: usize,
     pub min_db: usize,
     /// allows re-detecting dead roll on a file that's already
@@ -34,7 +34,7 @@ pub struct LoggingConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub transcode: TranscodeConfig,
-    pub blackroll: BlackrollConfig,
+    pub deadroll: DeadrollConfig,
     pub processing: JobConfig,
     #[serde(default)]
     pub logging: LoggingConfig,

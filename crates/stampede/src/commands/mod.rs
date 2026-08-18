@@ -142,7 +142,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "config.yaml",
-                "transcode:\n  target: vp9\nblackroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
+                "transcode:\n  target: vp9\ndeadroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
             )?;
 
             let opts = Options::try_parse_from([
@@ -166,7 +166,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "config.yaml",
-                "transcode:\n  target: vp9\nblackroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
+                "transcode:\n  target: vp9\ndeadroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 2\n  threads_per_job: 4\n  paths: []",
             )?;
 
             let opts = Options::try_parse_from([
@@ -190,7 +190,7 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "custom.yaml",
-                "transcode:\n  target: h264\nblackroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 1\n  threads_per_job: 1\n  paths: []",
+                "transcode:\n  target: h264\ndeadroll:\n  min_duration: 1\n  min_db: 1\nprocessing:\n  jobs: 1\n  threads_per_job: 1\n  paths: []",
             )?;
             jail.set_env("STAMPEDE_CONFIG", "custom.yaml");
 

@@ -35,7 +35,7 @@ struct DeadrollStreamInfo {
 pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
     open_media_ctx(
         &path,
-        config.blackroll.force,
+        config.deadroll.force,
         STAMPEDE_DEADROLL,
         || DeadrollError::AlreadyDeadrolled,
         |mut input_ctx, mut output_ctx, tmp_out_path| {
@@ -49,10 +49,10 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
                 .best(media::Type::Audio)
                 .expect("could not find best audio stream");
 
-            let video_filter_spec = format!("blackdetect=d={}", config.blackroll.min_duration);
+            let video_filter_spec = format!("blackdetect=d={}", config.deadroll.min_duration);
             let audio_filter_spec = format!(
                 "silencedetect=n=-{}dB:d={}",
-                config.blackroll.min_db, config.blackroll.min_duration
+                config.deadroll.min_db, config.deadroll.min_duration
             );
 
             let analysis_job_config = AnalysisJobConfig {

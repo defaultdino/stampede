@@ -17,7 +17,7 @@ mod filter;
 mod pipeline;
 
 #[derive(Serialize)]
-struct BlackrollOverrides {
+struct DeadrollOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     min_duration: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,7 +28,7 @@ struct BlackrollOverrides {
 
 #[derive(Serialize)]
 pub struct Overrides {
-    blackroll: BlackrollOverrides,
+    deadroll: DeadrollOverrides,
     processing: ProcessingOverrides,
 }
 
@@ -47,7 +47,7 @@ pub struct Options {
 impl Options {
     pub fn overrides(&self) -> Overrides {
         Overrides {
-            blackroll: BlackrollOverrides {
+            deadroll: DeadrollOverrides {
                 min_duration: self.min_duration,
                 min_db: self.min_db,
                 force: self.force.overrides(),
