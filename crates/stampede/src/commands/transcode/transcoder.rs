@@ -94,45 +94,50 @@ impl Transcoder {
         }
     }
 
-    pub fn send_eof_to_decoder(&mut self) {
-        self.decoder.send_eof().unwrap();
+    pub fn send_eof_to_decoder(&mut self) -> Result<(), ffmpeg_next::Error> {
+        self.decoder.send_eof()?;
+        Ok(())
     }
 
-    pub fn send_eof_to_encoder(&mut self) {
-        self.encoder.send_eof().unwrap();
+    pub fn send_eof_to_encoder(&mut self) -> Result<(), ffmpeg_next::Error> {
+        self.encoder.send_eof()?;
+        Ok(())
     }
 
-    fn send_frame_to_encoder(&mut self, frame: &frame::Video) {
-        self.encoder.send_frame(frame).unwrap();
+    fn send_frame_to_encoder(&mut self, frame: &frame::Video) -> Result<(), ffmpeg_next::Error> {
+        self.encoder.send_frame(frame)?;
+        Ok(())
     }
 
     pub fn receive_and_process_encoded_packets(
         &mut self,
         output_ctx: &mut format::context::Output,
         ost_time_base: Rational,
-    ) {
+    ) -> Result<(), ffmpeg_next::Error> {
         let mut encoded = Packet::empty();
         while self.encoder.receive_packet(&mut encoded).is_ok() {
             encoded.set_stream(self.output_stream_idx);
             encoded.rescale_ts(self.input_time_base, ost_time_base);
-            encoded.write_interleaved(output_ctx).unwrap();
+            encoded.write_interleaved(output_ctx)?;
         }
+        Ok(())
     }
 
     pub fn receive_and_process_decoded_frames(
         &mut self,
         octx: &mut format::context::Output,
         ost_time_base: Rational,
-    ) {
+    ) -> Result<(), ffmpeg_next::Error> {
         let mut frame = frame::Video::empty();
         while self.decoder.receive_frame(&mut frame).is_ok() {
             self.frame_count += 1;
             let timestamp = frame.timestamp();
             frame.set_pts(timestamp);
             frame.set_kind(picture::Type::None);
-            self.send_frame_to_encoder(&frame);
-            self.receive_and_process_encoded_packets(octx, ost_time_base);
+            self.send_frame_to_encoder(&frame)?;
+            self.receive_and_process_encoded_packets(octx, ost_time_base)?;
         }
+        Ok(())
     }
 }
 

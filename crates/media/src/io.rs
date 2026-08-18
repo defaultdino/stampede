@@ -40,7 +40,7 @@ pub fn stamp_and_write_output_header(
     output_ctx: &mut Output,
     input_ctx: &Input,
     output_file_path: Option<&str>,
-) -> Vec<Rational> {
+) -> Result<Vec<Rational>, ffmpeg_next::Error> {
     let mut metadata = input_ctx.metadata().to_owned();
     metadata.set(metadata_key, metadata_value);
     output_ctx.set_metadata(metadata);
@@ -49,8 +49,8 @@ pub fn stamp_and_write_output_header(
         format::context::output::dump(output_ctx, 0, Some(output));
     }
 
-    output_ctx.write_header().unwrap();
-    output_ctx.streams().map(|ost| ost.time_base()).collect()
+    output_ctx.write_header()?;
+    Ok(output_ctx.streams().map(|ost| ost.time_base()).collect())
 }
 
 fn tmp_output_path(path: &Path) -> PathBuf {

@@ -63,10 +63,10 @@ pub fn transcode(
                 &mut output_ctx,
                 &input_ctx,
                 Some(tmp_out_path_str),
-            );
+            )?;
 
-            transcode_and_remux_packets(&mut input_ctx, &mut output_ctx, &mut stream_routing_ctx);
-            flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx);
+            transcode_and_remux_packets(&mut input_ctx, &mut output_ctx, &mut stream_routing_ctx)?;
+            flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx)?;
 
             let did_nothing = stream_routing_ctx.routes.iter().any(
                 |r| matches!(r, StreamRoute::Transcode { transcoder, .. } if transcoder.frame_count == 0),
@@ -139,7 +139,7 @@ fn setup_stream_mapping_and_transcoders(
     Ok(())
 }
 
-fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_ctx: &mut Output) {
+fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_ctx: &mut Output) -> Result<(), TranscodeError> {
     for route in stream_routing_ctx.routes.iter_mut() {
         if let StreamRoute::Transcode {
             output_stream_idx,
@@ -147,20 +147,23 @@ fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_
         } = route
         {
             let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
-            transcoder.send_eof_to_decoder();
-            transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base);
-            transcoder.send_eof_to_encoder();
-            transcoder.receive_and_process_encoded_packets(output_ctx, ost_time_base);
+            transcoder.send_eof_to_decoder()?;
+            transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base)?;
+            transcoder.send_eof_to_encoder()?;
+            transcoder.receive_and_process_encoded_packets(output_ctx, ost_time_base)?;
         }
     }
-    output_ctx.write_trailer().unwrap();
+
+    output_ctx.write_trailer()?;
+
+    Ok(())
 }
 
 fn transcode_and_remux_packets(
     input_ctx: &mut Input,
     output_ctx: &mut Output,
     stream_routing_ctx: &mut StreamRoutingCtx,
-) {
+) -> Result<(), ffmpeg_next::Error> {
     for (stream, mut packet) in input_ctx.packets() {
         match &mut stream_routing_ctx.routes[stream.index()] {
             StreamRoute::Skip => continue,
@@ -170,7 +173,7 @@ fn transcode_and_remux_packets(
             } => {
                 let ost_time_base = stream_routing_ctx.output_time_bases[*output_stream_idx];
                 transcoder.send_packet_to_decoder(&packet);
-                transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base);
+                transcoder.receive_and_process_decoded_frames(output_ctx, ost_time_base)?;
             }
             StreamRoute::Copy {
                 output_stream_idx,
@@ -180,8 +183,10 @@ fn transcode_and_remux_packets(
                 packet.rescale_ts(*input_stream_time_base, ost_time_base);
                 packet.set_position(-1);
                 packet.set_stream(*output_stream_idx as _);
-                packet.write_interleaved(output_ctx).unwrap();
+                packet.write_interleaved(output_ctx)?;
             }
         }
     }
+
+    Ok(())
 }

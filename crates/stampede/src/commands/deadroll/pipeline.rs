@@ -81,7 +81,7 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
             let snapped_keyframes = snap_to_keyframes(&cut_ranges, &keyframe_ts);
 
             input_ctx.seek(0, ..)?;
-            let mut mapping = setup_output_streams(&input_ctx, &mut output_ctx);
+            let mut mapping = setup_output_streams(&input_ctx, &mut output_ctx)?;
 
             let output_time_bases = stamp_and_write_output_header(
                 STAMPEDE_DEADROLL,
@@ -89,7 +89,7 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
                 &mut output_ctx,
                 &input_ctx,
                 None,
-            );
+            )?;
 
             if !keyframe_ts.is_empty() {
                 write_output_skipping_cuts(
@@ -103,7 +103,7 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
                 log::info!("no key frames to cut");
             }
 
-            output_ctx.write_trailer().unwrap();
+            output_ctx.write_trailer()?;
 
             std::fs::rename(tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
 
@@ -222,7 +222,7 @@ fn write_output_skipping_cuts(
 fn setup_output_streams(
     input_ctx: &Input,
     output_ctx: &mut Output,
-) -> Vec<Option<DeadrollStreamInfo>> {
+) -> Result<Vec<Option<DeadrollStreamInfo>>, ffmpeg_next::Error> {
     let mut mapping: Vec<Option<DeadrollStreamInfo>> =
         (0..input_ctx.nb_streams()).map(|_| None).collect();
 
@@ -230,8 +230,8 @@ fn setup_output_streams(
         input_ctx.streams().enumerate().enumerate()
     {
         let mut output_stream = output_ctx
-            .add_stream(encoder::find(codec::Id::None))
-            .unwrap();
+            .add_stream(encoder::find(codec::Id::None))?;
+
         output_stream.set_parameters(input_stream.parameters());
         unsafe {
             (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
@@ -245,7 +245,7 @@ fn setup_output_streams(
         });
     }
 
-    mapping
+    Ok(mapping)
 }
 
 fn get_stream_ts_with_keyframes(
