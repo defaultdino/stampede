@@ -7,9 +7,9 @@ use std::{process::ExitCode, sync::Arc};
 
 use crate::{commands::deadroll::pipeline::deadroll, config::Config};
 
-mod blackdetect;
 mod pipeline;
-mod silencedetect;
+mod analysis;
+mod filter;
 
 #[derive(Serialize)]
 struct DetectOverrides {
@@ -36,7 +36,7 @@ impl Options {
             },
         }
     }
-    
+
     pub fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
         let config: Arc<Config> = Arc::new(figment.extract().context("failed to extract config")?);
         let closure_config = config.clone();

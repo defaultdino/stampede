@@ -20,3 +20,7 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
 
     Ok(())
 }
+
+fn read_frames() {
+
+}
