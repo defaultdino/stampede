@@ -81,7 +81,7 @@ pub struct AnalysisJobConfig {
     pub logging_enabled: bool,
 }
 
-fn build_video_pipeline(
+pub fn build_video_pipeline(
     ictx: &format::context::Input,
     stream_index: usize,
     filter_spec: &str,
@@ -92,8 +92,8 @@ fn build_video_pipeline(
     let decoder = codec::context::Context::from_parameters(stream.parameters())?
         .decoder()
         .video()?;
-    // build filter::Graph with buffer/buffersink + filter_spec ...
-    let filter = video_filter(filter_spec)?;
+    
+    let filter = video_filter(filter_spec, &decoder)?;
 
     Ok(VideoAnalysisPipeline {
         decoder,
@@ -105,7 +105,7 @@ fn build_video_pipeline(
     })
 }
 
-fn build_audio_pipeline(
+pub fn build_audio_pipeline(
     ictx: &format::context::Input,
     stream_index: usize,
     filter_spec: &str,
@@ -116,8 +116,8 @@ fn build_audio_pipeline(
     let decoder = codec::context::Context::from_parameters(stream.parameters())?
         .decoder()
         .audio()?;
-    // build filter::Graph with abuffer/abuffersink + filter_spec ...
-    let filter = audio_filter(filter_spec)?;
+
+    let filter = audio_filter(filter_spec, &decoder)?;
 
     Ok(AudioAnalysisPipeline {
         decoder,
@@ -128,3 +128,4 @@ fn build_audio_pipeline(
         },
     })
 }
+

@@ -9,6 +9,7 @@ use media::job::process_media;
 use media::video_codec::VideoCodec;
 use serde::Serialize;
 
+use crate::commands::{ForceOptions, ProcessingOptions, ProcessingOverrides};
 use crate::config::Config;
 
 use self::pipeline::transcode;
@@ -25,16 +26,6 @@ struct TranscodeOverrides {
     force: Option<bool>,
 }
 
-#[derive(Serialize)]
-struct ProcessingOverrides {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    jobs: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    threads_per_job: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    paths: Option<Vec<String>>,
-}
-
 /// nested view of the CLI flags, matching the shape of `Config` so figment
 /// can deep-merge command-line overrides onto the yaml sections.
 #[derive(Serialize)]
@@ -48,19 +39,10 @@ pub struct Options {
     /// the target codec to transcode container media into
     #[arg(short, long, value_enum)]
     target: Option<VideoCodec>,
-    /// number of transcode jobs to perform concurrently
-    #[arg(short, long)]
-    jobs: Option<u8>,
-    /// number of threads to utilize per concurrent job
-    #[arg(long)]
-    threads_per_job: Option<u8>,
-    /// paths to scan for media containers
-    #[arg(long)]
-    paths: Option<Vec<String>>,
-    /// allows re-transcoding a file that's already been
-    /// through stampede, which causes additional quality loss
-    #[arg(short, long)]
-    force: Option<bool>,
+    #[command(flatten)]
+    processing: ProcessingOptions,
+    #[command(flatten)]
+    force: ForceOptions,
 }
 
 impl Options {
@@ -70,13 +52,9 @@ impl Options {
         Overrides {
             transcode: TranscodeOverrides {
                 target: self.target,
-                force: self.force,
+                force: self.force.overrides(),
             },
-            processing: ProcessingOverrides {
-                jobs: self.jobs,
-                threads_per_job: self.threads_per_job,
-                paths: self.paths.clone(),
-            },
+            processing: self.processing.overrides(),
         }
     }
 
@@ -120,7 +98,7 @@ mod tests {
     fn target_and_threads_per_job_are_optional() {
         let opts = Options::try_parse_from(["stampede"]).unwrap();
         assert!(opts.target.is_none());
-        assert!(opts.threads_per_job.is_none());
+        assert!(opts.processing.threads_per_job.is_none());
     }
 
     #[test]

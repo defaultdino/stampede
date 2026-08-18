@@ -5,35 +5,52 @@ use media::job::process_media;
 use serde::Serialize;
 use std::{process::ExitCode, sync::Arc};
 
-use crate::{commands::deadroll::pipeline::deadroll, config::Config};
+use crate::{
+    commands::{ForceOptions, ProcessingOptions, ProcessingOverrides, deadroll::pipeline::deadroll},
+    config::Config,
+};
 
-mod pipeline;
 mod analysis;
 mod filter;
+mod pipeline;
 
 #[derive(Serialize)]
-struct DetectOverrides {
+struct BlackrollOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
-    length: Option<usize>,
+    min_duration: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_db: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    force: Option<bool>,
 }
 
 #[derive(Serialize)]
 pub struct Overrides {
-    detect: DetectOverrides,
+    blackroll: BlackrollOverrides,
+    processing: ProcessingOverrides,
 }
 
 #[derive(Parser, Debug)]
 pub struct Options {
-    #[arg(short, long)]
-    length: Option<usize>,
+    #[arg(long)]
+    min_duration: Option<usize>,
+    #[arg(long)]
+    min_db: Option<usize>,
+    #[command(flatten)]
+    processing: ProcessingOptions,
+    #[command(flatten)]
+    force: ForceOptions,
 }
 
 impl Options {
     pub fn overrides(&self) -> Overrides {
         Overrides {
-            detect: DetectOverrides {
-                length: self.length,
+            blackroll: BlackrollOverrides {
+                min_duration: self.min_duration,
+                min_db: self.min_db,
+                force: self.force.overrides(),
             },
+            processing: self.processing.overrides(),
         }
     }
 

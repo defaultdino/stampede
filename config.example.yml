@@ -33,6 +33,17 @@ transcode:
       deadline: "good"
       cpu-used: "2"
 
+blackroll:
+  # minimum duration, in seconds, of black/silence for a
+  # segment to be treated as dead roll
+  min_duration: 2
+  # silence threshold, in dB, below which audio is considered silent
+  min_db: 50
+
+  # allows re-detecting dead roll on a file that's already
+  # been through stampede
+  force: true
+
 processing:
   # how many files to transcode concurrently
   jobs: 2
