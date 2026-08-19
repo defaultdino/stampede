@@ -67,6 +67,7 @@ impl Options {
         let closure_config = config.clone();
 
         walk_media_containers(&config.processing, move |path| {
+            log::info!("detecting deadrolls in {}", path.display());
             match deadroll(&closure_config, path) {
                 Ok(_) => {
                     log::info!("finished detecting deadrolls in media streams");

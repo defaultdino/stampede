@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use ffmpeg_next::{
-    Dictionary, Packet, Rational, codec, decoder, encoder, format, frame, picture, threading,
+    Dictionary, Packet, Rational, codec, decoder, encoder, error::EAGAIN, format, frame, picture,
+    threading,
 };
 
 use media::video_codec::VideoCodec;
@@ -9,8 +10,10 @@ use media::video_codec::VideoCodec;
 // the resource used here for reference was
 // https://github.com/zmwangx/rust-ffmpeg/blob/master/examples/transcode-x264.rs
 
+const MIN_DECODED_FRACTION: f64 = 0.90;
+
 #[derive(thiserror::Error, Debug)]
-pub enum TranscoderSetupError {
+pub enum TranscoderError {
     #[error("no encoder registered for codec {codec}")]
     NoEncoderForCodec { codec: String },
     #[error("failed to open {codec} encoder with the supplied options")]
@@ -45,12 +48,13 @@ pub enum TranscoderSetupError {
 }
 
 pub struct Transcoder {
+    pub source_label: String,
     pub output_stream_idx: usize,
     pub decoder: decoder::Video,
     pub input_time_base: Rational,
     pub encoder: encoder::Video,
-    pub source_label: String,
     pub frame_count: usize,
+    pub expected_frames: usize,
 }
 
 pub struct TranscodeJobConfig<'a> {
@@ -61,11 +65,11 @@ pub struct TranscodeJobConfig<'a> {
 
 impl Transcoder {
     pub fn new(
+        source_label: impl Into<String>,
         input_stream: &format::stream::Stream,
         output_ctx: &mut format::context::Output,
-        source_label: impl Into<String>,
         transcode_job_config: &TranscodeJobConfig,
-    ) -> Result<Self, TranscoderSetupError> {
+    ) -> Result<Self, TranscoderError> {
         let global_header = output_ctx
             .format()
             .flags()
@@ -78,7 +82,7 @@ impl Transcoder {
 
         let mut decoder_ctx =
             ffmpeg_next::codec::context::Context::from_parameters(input_stream.parameters())
-                .map_err(|source| TranscoderSetupError::DecoderContext {
+                .map_err(|source| TranscoderError::DecoderContext {
                     stream_idx: input_stream.index(),
                     codec: input_stream.parameters().id().to_string(),
                     source,
@@ -89,16 +93,16 @@ impl Transcoder {
             decoder_ctx
                 .decoder()
                 .video()
-                .map_err(|source| TranscoderSetupError::DecoderOpen {
+                .map_err(|source| TranscoderError::DecoderOpen {
                     codec: input_stream.parameters().id().to_string(),
                     source,
                 })?;
 
-        let codec = encoder::find(transcode_job_config.target.codec_id()).ok_or_else(||
-            TranscoderSetupError::NoEncoderForCodec {
+        let codec = encoder::find(transcode_job_config.target.codec_id()).ok_or_else(|| {
+            TranscoderError::NoEncoderForCodec {
                 codec: transcode_job_config.target.codec_id().to_string(),
-            },
-        )?;
+            }
+        })?;
 
         let mut encoder_ctx = codec::context::Context::new_with_codec(codec);
 
@@ -107,7 +111,7 @@ impl Transcoder {
             encoder_ctx
                 .encoder()
                 .video()
-                .map_err(|_| TranscoderSetupError::NotVideoCodec {
+                .map_err(|_| TranscoderError::NotVideoCodec {
                     codec: codec.id().to_string(),
                 })?;
 
@@ -124,7 +128,7 @@ impl Transcoder {
 
         let opened_encoder = encoder
             .open_with(transcode_job_config.opts.clone())
-            .map_err(|source| TranscoderSetupError::EncoderOpen {
+            .map_err(|source| TranscoderError::EncoderOpen {
                 codec: codec.id().to_string(),
                 source,
             })?;
@@ -132,29 +136,28 @@ impl Transcoder {
         let mut ost =
             output_ctx
                 .add_stream(codec)
-                .map_err(|source| TranscoderSetupError::AddStream {
+                .map_err(|source| TranscoderError::AddStream {
                     codec: codec.id().to_string(),
                     source,
                 })?;
         ost.set_parameters(&opened_encoder);
 
         Ok(Self {
+            source_label: source_label.into(),
             output_stream_idx: ost.index(),
             decoder,
             input_time_base: input_stream.time_base(),
             encoder: opened_encoder,
-            source_label: source_label.into(),
             frame_count: 0,
+            expected_frames: expected_frame_count(input_stream),
         })
     }
 
     pub fn send_packet_to_decoder(&mut self, packet: &Packet) {
-        if let Err(e) = self.decoder.send_packet(packet) {
-            log::warn!(
-                "job={} skipping undecodable packet: {}",
-                self.source_label,
-                e
-            );
+        match self.decoder.send_packet(packet) {
+            Ok(_) => {}
+            Err(ffmpeg_next::Error::Other { errno }) if errno == EAGAIN => {}
+            Err(e) => log::warn!("skipping undecodable packet in {}: {e}", self.source_label),
         }
     }
 
@@ -199,6 +202,28 @@ impl Transcoder {
             self.receive_and_process_encoded_packets(output_ctx, output_stream_time_base)?;
         }
         Ok(())
+    }
+
+    pub fn decoded_enough(&self) -> bool {
+        if self.expected_frames == 0 {
+            return true;
+        }
+        self.frame_count as f64 >= self.expected_frames as f64 * MIN_DECODED_FRACTION
+    }
+}
+
+fn expected_frame_count(input_stream: &format::stream::Stream) -> usize {
+    let stored = input_stream.frames();
+    if stored > 0 {
+        return stored as usize;
+    }
+
+    let duration_secs = input_stream.duration() as f64 * f64::from(input_stream.time_base());
+    let fps = f64::from(input_stream.avg_frame_rate());
+    if duration_secs > 0.0 && fps > 0.0 {
+        (duration_secs * fps) as usize
+    } else {
+        0
     }
 }
 

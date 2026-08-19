@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ::media::io::{STAMPEDE_DEADROLL, open_media_ctx, stamp_and_write_output_header};
 use ffmpeg_next::{
     Packet, Rational, codec, encoder,
+    ffi::{AV_NOPTS_VALUE, AV_TIME_BASE},
     format::context::{Input, Output},
     media,
 };
@@ -15,20 +16,28 @@ use crate::{
     config::Config,
 };
 
+const EPSILON: f64 = 1.0;
+const TRIM_WARN_SECS: f64 = 1.0;
+
 #[derive(thiserror::Error, Debug)]
 pub enum DeadrollError {
     #[error("media in this container has already been deadroll detected")]
     AlreadyDeadrolled,
 
+    #[error("detection cut every packet; refusing to overwrite {path:?} with an empty file")]
+    EmptyOutput { path: PathBuf },
+
     #[error(transparent)]
     Ffmpeg(#[from] ffmpeg_next::Error),
+
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
 }
 
 struct DeadrollStreamInfo {
     output_stream_idx: usize,
     input_time_base: Rational,
-    cumulative_shift_secs: f64,
-    next_range_idx: usize,
+    last_output_dts: Option<i64>,
 }
 
 pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
@@ -77,7 +86,20 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
                 &mut audio_analysis_pipeline,
             );
 
-            let snapped_keyframes = snap_to_keyframes(&cut_ranges, &keyframe_ts);
+            let duration_secs = match input_ctx.duration() {
+                AV_NOPTS_VALUE => f64::INFINITY,
+                d => d as f64 / f64::from(AV_TIME_BASE),
+            };
+
+            let snapped_keyframes = snap_to_keyframes(&cut_ranges, &keyframe_ts, duration_secs);
+
+            log::info!(
+                "detected {} black∩silence range(s): {:?}; {} keyframe(s); snapped cuts: {:?}",
+                cut_ranges.len(),
+                cut_ranges,
+                keyframe_ts.len(),
+                snapped_keyframes,
+            );
 
             input_ctx.seek(0, ..)?;
             let mut mapping = setup_output_streams(&input_ctx, &mut output_ctx)?;
@@ -91,21 +113,23 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
             )?;
 
             if !keyframe_ts.is_empty() {
-                write_output_skipping_cuts(
+                let kept = write_output_skipping_cuts(
                     &mut input_ctx,
                     &mut output_ctx,
                     &snapped_keyframes,
                     &output_time_bases,
                     &mut mapping,
                 );
+                if kept == 0 {
+                    std::fs::remove_file(tmp_out_path)?;
+                    return Err(DeadrollError::EmptyOutput { path: path.clone() });
+                }
+                output_ctx.write_trailer()?;
+                std::fs::rename(tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
             } else {
                 log::info!("no key frames to cut");
+                std::fs::remove_file(tmp_out_path)?;
             }
-
-            output_ctx.write_trailer()?;
-
-            std::fs::rename(tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
-
             Ok(())
         },
     )
@@ -114,7 +138,11 @@ pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
 /// Snaps timestamps where blackdetect/silencedetect
 /// detected black/silent sections to nearest keyframes (necessary
 /// for things like b-frames)
-fn snap_to_keyframes(cut_ranges: &[(f64, f64)], keyframes: &[f64]) -> Vec<(f64, f64)> {
+fn snap_to_keyframes(
+    cut_ranges: &[(f64, f64)],
+    keyframes: &[f64],
+    duration_secs: f64,
+) -> Vec<(f64, f64)> {
     let mut snapped_keyframes = Vec::<(f64, f64)>::new();
     for (start, end) in cut_ranges {
         let l_part_idx = keyframes.partition_point(|&k| k <= *start);
@@ -126,96 +154,106 @@ fn snap_to_keyframes(cut_ranges: &[(f64, f64)], keyframes: &[f64]) -> Vec<(f64, 
             keyframes[l_part_idx - 1]
         };
 
-        let snapped_end = if s_part_idx == keyframes.len() {
-            f64::INFINITY
+        let trimmed = *start - snapped_start;
+        if trimmed > TRIM_WARN_SECS {
+            log::warn!(
+                "cut at {start:.3}s snapped back to keyframe {snapped_start:.3}s, discarding {trimmed:.3}s of content before the dead roll",
+            );
+        }
+
+        if s_part_idx == keyframes.len() {
+            if *end >= duration_secs - EPSILON {
+                snapped_keyframes.push((snapped_start, f64::INFINITY));
+            } else {
+                log::warn!("skipping cut at {end:.3}s: no keyframe after it to resume on");
+            }
         } else {
-            keyframes[s_part_idx]
-        };
-        snapped_keyframes.push((snapped_start, snapped_end));
+            snapped_keyframes.push((snapped_start, keyframes[s_part_idx]));
+        }
     }
 
-    snapped_keyframes
+    normalize_ranges(snapped_keyframes)
 }
 
-fn write_timed_packet(
+fn cut_seconds_before(t: f64, ranges: &[(f64, f64)]) -> f64 {
+    ranges
+        .iter()
+        .take_while(|(_, end)| *end <= t)
+        .map(|(start, end)| end - start)
+        .sum()
+}
+
+fn is_within_cut(t: f64, ranges: &[(f64, f64)]) -> bool {
+    ranges.iter().any(|&(start, end)| t >= start && t < end)
+}
+
+fn stamp_shifted(
     packet: &mut Packet,
-    pts: i64,
     info: &mut DeadrollStreamInfo,
+    output_time_base: Rational,
     cut_ranges: &[(f64, f64)],
-    output_time_bases: &[Rational],
-) -> bool {
-    let pts_seconds = f64::from(Rational(pts as i32, 1) * info.input_time_base);
+) {
+    let Some(anchor) = packet.pts().or_else(|| packet.dts()) else {
+        return;
+    };
+    let anchor_secs = anchor as f64 * f64::from(info.input_time_base);
+    let shift_secs = cut_seconds_before(anchor_secs, cut_ranges);
 
-    while info.next_range_idx < cut_ranges.len() && pts_seconds >= cut_ranges[info.next_range_idx].1
-    {
-        let (start, end) = cut_ranges[info.next_range_idx];
-        info.cumulative_shift_secs += end - start;
-        info.next_range_idx += 1;
-    }
-
-    if let Some(&(start, end)) = cut_ranges.get(info.next_range_idx)
-        && pts_seconds >= start
-        && pts_seconds < end
-    {
-        return false;
-    }
-
-    let output_stream_time_base = output_time_bases[info.output_stream_idx];
-    packet.rescale_ts(info.input_time_base, output_stream_time_base);
-
-    let had_real_dts = packet.dts().is_some();
-
-    // per-packet shift from the streams history
-    let raw_dts = packet
-        .dts()
-        .or(packet.pts())
-        .expect("packet has no dts or pts");
-
-    let shift_ticks = (info.cumulative_shift_secs / f64::from(output_stream_time_base)) as i64;
-    let new_dts = raw_dts - shift_ticks;
+    packet.rescale_ts(info.input_time_base, output_time_base);
+    let shift_ticks = (shift_secs / f64::from(output_time_base)) as i64;
 
     if let Some(pts) = packet.pts() {
         packet.set_pts(Some(pts - shift_ticks));
     }
 
-    if had_real_dts {
-        packet.set_dts(Some(new_dts));
-    } else {
-        packet.set_dts(None);
+    if let Some(dts) = packet.dts() {
+        let mut shifted = dts - shift_ticks;
+        if let Some(last) = info.last_output_dts
+            && shifted <= last
+        {
+            shifted = last + 1;
+        }
+        info.last_output_dts = Some(shifted);
+        packet.set_dts(Some(shifted));
     }
-
-    true
 }
 
-/// A DeadrollStreamInfo holds which cut range this stream is currently up to
-/// and total seconds worth of cut content so far for this stream
 fn write_output_skipping_cuts(
     input_ctx: &mut Input,
     output_ctx: &mut Output,
     cut_ranges: &[(f64, f64)],
     output_time_bases: &[Rational],
     mapping: &mut [Option<DeadrollStreamInfo>],
-) {
+) -> u64 {
+    let mut kept = 0u64;
+    let mut dropped = 0u64;
     for (stream, mut packet) in input_ctx.packets() {
         let Some(info) = &mut mapping[stream.index()] else {
             continue;
         };
 
-        let keep = match packet.pts() {
-            Some(pts) => write_timed_packet(&mut packet, pts, info, cut_ranges, output_time_bases),
-            None => true,
-        };
-
-        if !keep {
-            continue;
+        if let Some(pts) = packet.pts() {
+            let pts_secs = pts as f64 * f64::from(info.input_time_base);
+            if is_within_cut(pts_secs, cut_ranges) {
+                dropped += 1;
+                continue;
+            }
         }
+
+        let output_time_base = output_time_bases[info.output_stream_idx];
+        stamp_shifted(&mut packet, info, output_time_base, cut_ranges);
 
         packet.set_position(-1);
         packet.set_stream(info.output_stream_idx as _);
         if let Err(e) = packet.write_interleaved(output_ctx) {
-            log::error!("failed to write interleaved packet: {e}",)
+            log::error!("failed to write interleaved packet: {e}")
+        } else {
+            kept += 1;
         }
     }
+
+    log::info!("kept {kept} packet(s), dropped {dropped} packet(s)");
+    kept
 }
 
 fn setup_output_streams(
@@ -228,8 +266,7 @@ fn setup_output_streams(
     for (output_stream_idx, (input_stream_idx, input_stream)) in
         input_ctx.streams().enumerate().enumerate()
     {
-        let mut output_stream = output_ctx
-            .add_stream(encoder::find(codec::Id::None))?;
+        let mut output_stream = output_ctx.add_stream(encoder::find(codec::Id::None))?;
 
         output_stream.set_parameters(input_stream.parameters());
         unsafe {
@@ -239,8 +276,7 @@ fn setup_output_streams(
         mapping[input_stream_idx] = Some(DeadrollStreamInfo {
             output_stream_idx,
             input_time_base: input_stream.time_base(),
-            cumulative_shift_secs: 0.0,
-            next_range_idx: 0,
+            last_output_dts: None,
         });
     }
 
@@ -262,7 +298,7 @@ fn get_stream_ts_with_keyframes(
             {
                 // calculate accumulator
                 let time_base = stream.time_base();
-                let packet_pts_seconds = f64::from(Rational(pts as i32, 1) * time_base);
+                let packet_pts_seconds = pts as f64 * f64::from(time_base);
                 keyframe_ts.push(packet_pts_seconds);
             }
         }
@@ -283,18 +319,105 @@ fn get_stream_ts_with_keyframes(
     )
 }
 
-/// Intersects timestamp ranges where both blackdetect
-/// and silentdetect determined there was no content
+fn normalize_ranges(mut ranges: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    ranges.retain(|(start, end)| end > start);
+    ranges.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut merged: Vec<(f64, f64)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
 fn intersect_ranges(a: &[(f64, f64)], b: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let a = normalize_ranges(a.to_vec());
+    let b = normalize_ranges(b.to_vec());
+
     let mut result = Vec::new();
-    for &(a_start, a_end) in a {
-        for &(b_start, b_end) in b {
-            let start = a_start.max(b_start);
-            let end = a_end.min(b_end);
-            if start < end {
-                result.push((start, end));
-            }
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        let start = a[i].0.max(b[j].0);
+        let end = a[i].1.min(b[j].1);
+        if start < end {
+            result.push((start, end));
+        }
+        if a[i].1 <= b[j].1 {
+            i += 1;
+        } else {
+            j += 1;
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_sorts_and_merges_overlapping_and_touching() {
+        let got = normalize_ranges(vec![
+            (3.0, 6.0),
+            (0.0, 2.0),
+            (1.0, 4.0),
+            (6.0, 8.0),
+            (9.0, 9.0),
+        ]);
+        assert_eq!(got, vec![(0.0, 8.0)]);
+    }
+
+    #[test]
+    fn intersect_normalizes_messy_inputs() {
+        let got = intersect_ranges(&[(0.0, 10.0)], &[(2.0, 5.0), (4.0, 8.0)]);
+        assert_eq!(got, vec![(2.0, 8.0)]);
+    }
+
+    #[test]
+    fn intersect_keeps_only_common_spans() {
+        let got = intersect_ranges(&[(0.0, 3.0), (5.0, 9.0)], &[(2.0, 6.0), (8.0, 10.0)]);
+        assert_eq!(got, vec![(2.0, 3.0), (5.0, 6.0), (8.0, 9.0)]);
+    }
+
+    #[test]
+    fn membership_is_half_open() {
+        let ranges = [(10.0, 20.0), (30.0, 40.0)];
+        assert!(!is_within_cut(5.0, &ranges));
+        assert!(is_within_cut(10.0, &ranges));
+        assert!(is_within_cut(15.0, &ranges));
+        assert!(!is_within_cut(20.0, &ranges));
+        assert!(!is_within_cut(25.0, &ranges));
+        assert!(is_within_cut(35.0, &ranges));
+    }
+
+    #[test]
+    fn shift_sums_only_cuts_that_end_before_t() {
+        let ranges = [(10.0, 20.0), (30.0, 40.0)];
+        assert_eq!(cut_seconds_before(5.0, &ranges), 0.0);
+        assert_eq!(cut_seconds_before(25.0, &ranges), 10.0);
+        assert_eq!(cut_seconds_before(45.0, &ranges), 20.0);
+    }
+
+    #[test]
+    fn snap_widens_cut_to_surrounding_keyframes() {
+        let keyframes = [0.0, 10.0, 20.0, 30.0, 40.0];
+        let got = snap_to_keyframes(&[(12.0, 18.0)], &keyframes, 45.0);
+        assert_eq!(got, vec![(10.0, 20.0)]);
+    }
+
+    #[test]
+    fn snap_extends_trailing_deadroll_to_eof() {
+        let keyframes = [0.0, 10.0, 20.0, 30.0, 40.0];
+        let got = snap_to_keyframes(&[(42.0, 45.0)], &keyframes, 45.0);
+        assert_eq!(got, vec![(40.0, f64::INFINITY)]);
+    }
+
+    #[test]
+    fn snap_skips_mid_file_cut_with_no_following_keyframe() {
+        let got = snap_to_keyframes(&[(50.0, 60.0)], &[0.0], 200.0);
+        assert!(got.is_empty());
+    }
 }

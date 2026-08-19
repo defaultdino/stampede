@@ -11,7 +11,10 @@ use ffmpeg_next::{
 
 use ::media::io::{STAMPEDE_TRANSCODE, open_media_ctx, stamp_and_write_output_header};
 
-use crate::{commands::transcode::transcoder::{self, TranscodeJobConfig}, config::Config};
+use crate::{
+    commands::transcode::transcoder::{self, TranscodeJobConfig},
+    config::Config,
+};
 
 use super::stream_route::{StreamRoute, StreamRoutingCtx};
 use super::transcoder::{Transcoder, parse_codec_opts};
@@ -21,9 +24,11 @@ pub enum TranscodeError {
     #[error("video streams in this container have already been transcoded")]
     AlreadyTranscoded,
     #[error(transparent)]
-    TranscoderSetup(#[from] transcoder::TranscoderSetupError),
+    Setup(#[from] transcoder::TranscoderError),
     #[error(transparent)]
     Ffmpeg(#[from] ffmpeg_next::Error),
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
 }
 
 pub fn transcode(
@@ -51,9 +56,9 @@ pub fn transcode(
             };
 
             setup_stream_mapping_and_transcoders(
-                tmp_out_path_str,
                 &mut output_ctx,
                 &input_ctx,
+                tmp_out_path_str,
                 &transcode_job_config,
                 &mut stream_routing_ctx,
             )?;
@@ -66,19 +71,34 @@ pub fn transcode(
                 Some(tmp_out_path_str),
             )?;
 
-            transcode_and_remux_packets(&mut input_ctx, &mut output_ctx, &mut stream_routing_ctx)?;
-            flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx)?;
+            match transcode_and_remux_packets(
+                &mut input_ctx,
+                &mut output_ctx,
+                &mut stream_routing_ctx,
+            ) {
+                Ok(()) => {
+                    flush_codecs_write_trailer(&mut stream_routing_ctx, &mut output_ctx)?;
 
-            let did_nothing = stream_routing_ctx.routes.iter().any(
-                |r| matches!(r, StreamRoute::Transcode { transcoder, .. } if transcoder.frame_count == 0),
-            );
+                    let under_decoded = stream_routing_ctx.routes.iter().any(|route| {
+                        matches!(route, StreamRoute::Transcode { transcoder, .. } if !transcoder.decoded_enough())
+                    });
 
-            if did_nothing {
-                let _ = std::fs::remove_file(tmp_out_path);
-                return Err(TranscodeError::Ffmpeg(ffmpeg_next::Error::InvalidData));
+                    if under_decoded {
+                        log::error!(
+                            "transcode decoded far fewer frames than expected (severe source corruption); keeping original"
+                        );
+                        std::fs::remove_file(tmp_out_path)?;
+                    } else {
+                        std::fs::rename(tmp_out_path, &path)
+                            .map_err(|_| ffmpeg_next::Error::External)?;
+                    }
+                }
+                Err(e) => {
+                    log::error!("transcoding failed entirely: {e}");
+                    std::fs::remove_file(tmp_out_path)?;
+                    return Err(e);
+                }
             }
-
-            std::fs::rename(tmp_out_path, &path).map_err(|_| ffmpeg_next::Error::External)?;
 
             Ok(())
         },
@@ -93,12 +113,12 @@ fn eligible_input_stream_medium(input_stream_medium: &Type) -> bool {
 }
 
 fn setup_stream_mapping_and_transcoders(
-    source_label: &str,
     output_ctx: &mut Output,
     input_ctx: &Input,
+    tmp_out_path_str: &str,
     transcode_job_config: &TranscodeJobConfig,
     stream_routing_ctx: &mut StreamRoutingCtx,
-) -> Result<(), TranscodeError>{
+) -> Result<(), TranscodeError> {
     let mut output_stream_idx = 0;
     for (input_stream_idx, input_stream) in input_ctx.streams().enumerate() {
         let medium = input_stream.parameters().medium();
@@ -110,9 +130,9 @@ fn setup_stream_mapping_and_transcoders(
             && input_stream.parameters().id() != transcode_job_config.target.codec_id()
         {
             let transcoder = Transcoder::new(
+                tmp_out_path_str,
                 &input_stream,
                 output_ctx,
-                source_label,
                 transcode_job_config,
             )
             .unwrap();
@@ -121,8 +141,7 @@ fn setup_stream_mapping_and_transcoders(
                 transcoder,
             }
         } else {
-            let mut output_stream = output_ctx
-                .add_stream(encoder::find(codec::Id::None))?;
+            let mut output_stream = output_ctx.add_stream(encoder::find(codec::Id::None))?;
             output_stream.set_parameters(input_stream.parameters());
             unsafe {
                 (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
@@ -139,7 +158,10 @@ fn setup_stream_mapping_and_transcoders(
     Ok(())
 }
 
-fn flush_codecs_write_trailer(stream_routing_ctx: &mut StreamRoutingCtx, output_ctx: &mut Output) -> Result<(), TranscodeError> {
+fn flush_codecs_write_trailer(
+    stream_routing_ctx: &mut StreamRoutingCtx,
+    output_ctx: &mut Output,
+) -> Result<(), TranscodeError> {
     for route in stream_routing_ctx.routes.iter_mut() {
         if let StreamRoute::Transcode {
             output_stream_idx,
@@ -163,10 +185,9 @@ fn transcode_and_remux_packets(
     input_ctx: &mut Input,
     output_ctx: &mut Output,
     stream_routing_ctx: &mut StreamRoutingCtx,
-) -> Result<(), ffmpeg_next::Error> {
+) -> Result<(), TranscodeError> {
     for (stream, mut packet) in input_ctx.packets() {
         match &mut stream_routing_ctx.routes[stream.index()] {
-            StreamRoute::Skip => continue,
             StreamRoute::Transcode {
                 output_stream_idx,
                 transcoder,
@@ -185,6 +206,7 @@ fn transcode_and_remux_packets(
                 packet.set_stream(*output_stream_idx as _);
                 packet.write_interleaved(output_ctx)?;
             }
+            StreamRoute::Skip => continue,
         }
     }
 

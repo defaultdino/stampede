@@ -1,5 +1,5 @@
 use ffmpeg_next::{
-    Frame, Packet, Rational,
+    Frame, Packet,
     codec::{self, Context},
     decoder, filter,
     format::{self, context::Input},
@@ -92,8 +92,7 @@ impl VideoAnalysisPipeline {
         }
 
         if let Some(start) = self.common.pending_start.take() {
-            let end_secs =
-                f64::from(Rational(self.last_seen_ts as i32, 1) * self.decoder.time_base());
+            let end_secs = self.last_seen_ts as f64 * f64::from(self.decoder.time_base());
             self.common.ranges.push((start, end_secs));
         }
     }
@@ -172,8 +171,7 @@ impl AudioAnalysisPipeline {
         }
 
         if let Some(start) = self.common.pending_start.take() {
-            let end_secs =
-                f64::from(Rational(self.last_seen_ts as i32, 1) * self.decoder.time_base());
+            let end_secs = self.last_seen_ts as f64 * f64::from(self.decoder.time_base());
             self.common.ranges.push((start, end_secs));
         }
     }
