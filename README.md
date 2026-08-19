@@ -1,5 +1,3 @@
-<img width="3020" height="1886" alt="image" src="https://github.com/user-attachments/assets/b5e1977e-e397-4419-b20e-c1ef48dfab69" />## Overview
-
 `stampede` is a batch processing tool meant to be used for large media libraries. It performs transcoding/deadroll detection jobs in batches and delegates threading options to the underling decoder/encoder used by individual transcoders in the application. To see all available config options please refer to the [config example](config.example.yml)
 
 This project is currently a heavy work in progress and it is not recommended to use it to any serious extent
