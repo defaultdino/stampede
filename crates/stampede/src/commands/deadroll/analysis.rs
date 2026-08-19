@@ -1,4 +1,10 @@
-use ffmpeg_next::{Frame, Packet, Rational, codec, decoder, filter, format, frame, threading};
+use ffmpeg_next::{
+    Frame, Packet, Rational,
+    codec::{self, Context},
+    decoder, filter,
+    format::{self, context::Input},
+    frame, threading,
+};
 
 use crate::commands::deadroll::filter::{audio_filter, video_filter};
 
@@ -189,21 +195,12 @@ pub struct AnalysisJobConfig {
 }
 
 pub fn build_video_pipeline(
-    ictx: &format::context::Input,
+    input_ctx: &format::context::Input,
     analysis_job_config: &AnalysisJobConfig,
     stream_index: usize,
     filter_spec: &str,
 ) -> Result<VideoAnalysisPipeline, ffmpeg_next::Error> {
-    let stream = ictx
-        .stream(stream_index)
-        .ok_or(ffmpeg_next::Error::StreamNotFound)?;
-    let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
-    decoder_ctx.set_time_base(stream.time_base());
-    decoder_ctx.set_threading(threading::Config {
-        kind: threading::Type::Frame,
-        count: analysis_job_config.threads_per_job,
-    });
-
+    let decoder_ctx = setup_decoder_ctx(input_ctx, stream_index, analysis_job_config)?;
     let decoder = decoder_ctx.decoder().video()?;
 
     let filter = video_filter(filter_spec, &decoder)?;
@@ -222,23 +219,13 @@ pub fn build_video_pipeline(
 }
 
 pub fn build_audio_pipeline(
-    ictx: &format::context::Input,
+    input_ctx: &format::context::Input,
     analysis_job_config: &AnalysisJobConfig,
     stream_index: usize,
     filter_spec: &str,
 ) -> Result<AudioAnalysisPipeline, ffmpeg_next::Error> {
-    let stream = ictx
-        .stream(stream_index)
-        .ok_or(ffmpeg_next::Error::StreamNotFound)?;
-    let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
-    decoder_ctx.set_time_base(stream.time_base());
-    decoder_ctx.set_threading(threading::Config {
-        kind: threading::Type::Frame,
-        count: analysis_job_config.threads_per_job,
-    });
-
+    let decoder_ctx = setup_decoder_ctx(input_ctx, stream_index, analysis_job_config)?;
     let decoder = decoder_ctx.decoder().audio()?;
-
     let filter = audio_filter(filter_spec, &decoder)?;
 
     Ok(AudioAnalysisPipeline {
@@ -252,4 +239,22 @@ pub fn build_audio_pipeline(
         last_seen_ts: 0,
         keys: SILENCE_KEYS,
     })
+}
+
+fn setup_decoder_ctx(
+    input_ctx: &Input,
+    stream_index: usize,
+    analysis_job_config: &AnalysisJobConfig,
+) -> Result<Context, ffmpeg_next::Error> {
+    let stream = input_ctx
+        .stream(stream_index)
+        .ok_or(ffmpeg_next::Error::StreamNotFound)?;
+    let mut decoder_ctx = codec::context::Context::from_parameters(stream.parameters())?;
+    decoder_ctx.set_time_base(stream.time_base());
+    decoder_ctx.set_threading(threading::Config {
+        kind: threading::Type::Frame,
+        count: analysis_job_config.threads_per_job,
+    });
+
+    Ok(decoder_ctx)
 }

@@ -31,7 +31,6 @@ struct DeadrollStreamInfo {
     next_range_idx: usize,
 }
 
-// AVFrame carries metadata holding lavfi.black_start and lavfi.black_end
 pub fn deadroll(config: &Config, path: PathBuf) -> Result<(), DeadrollError> {
     open_media_ctx(
         &path,

@@ -118,8 +118,6 @@ impl Options {
             .into_iter()
             .fold(base, |f, path| f.admerge(Yaml::file(path)));
 
-
-
         match &self.subcommand {
             Subcommand::Transcode(opts) => {
                 from_files.admerge(Serialized::defaults(opts.overrides()))

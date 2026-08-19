@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use figment::Figment;
-use media::job::process_media;
+use media::job::walk_media_containers;
 use serde::Serialize;
 use std::{process::ExitCode, sync::Arc};
 
@@ -58,15 +58,21 @@ impl Options {
 
     pub fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
         let config: Arc<Config> = Arc::new(figment.extract().context("failed to extract config")?);
+
+        if config.processing.jobs == 0 {
+            log::error!("config.processing.jobs must be set to > 0");
+            return Ok(ExitCode::FAILURE);
+        }
+
         let closure_config = config.clone();
 
-        process_media(&config.processing, move |path| {
+        walk_media_containers(&config.processing, move |path| {
             match deadroll(&closure_config, path) {
                 Ok(_) => {
-                    log::info!("finished deadrolling media streams");
+                    log::info!("finished detecting deadrolls in media streams");
                 }
                 Err(e) => {
-                    log::error!("failed to deadroll detect media streams: {}", e);
+                    log::error!("failed to detect deadrolls in media streams: {}", e);
                 }
             }
         });

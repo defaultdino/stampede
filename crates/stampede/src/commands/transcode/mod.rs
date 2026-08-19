@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{Context};
 use clap::Parser;
 use figment::Figment;
-use media::job::process_media;
+use media::job::walk_media_containers;
 use media::video_codec::VideoCodec;
 use serde::Serialize;
 
@@ -60,6 +60,12 @@ impl Options {
 
     pub fn run(self, figment: &Figment) -> anyhow::Result<ExitCode> {
         let config: Arc<Config> = Arc::new(figment.extract().context("failed to extract config")?);
+
+        if config.processing.jobs == 0 {
+            log::error!("config.processing.jobs must be set to > 0");
+            return Ok(ExitCode::FAILURE);
+        }
+
         let closure_config = config.clone();
 
         let opts = Arc::new(
@@ -68,7 +74,7 @@ impl Options {
                 .unwrap_or_default(),
         );
 
-        process_media(&config.processing, move |path| {
+        walk_media_containers(&config.processing, move |path| {
             match transcode(&closure_config, &opts, path) {
                 Ok(_) => {
                     log::info!(

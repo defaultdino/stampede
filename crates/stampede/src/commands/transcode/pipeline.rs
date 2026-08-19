@@ -11,7 +11,7 @@ use ffmpeg_next::{
 
 use ::media::io::{STAMPEDE_TRANSCODE, open_media_ctx, stamp_and_write_output_header};
 
-use crate::{commands::transcode::transcoder::TranscodeJobConfig, config::Config};
+use crate::{commands::transcode::transcoder::{self, TranscodeJobConfig}, config::Config};
 
 use super::stream_route::{StreamRoute, StreamRoutingCtx};
 use super::transcoder::{Transcoder, parse_codec_opts};
@@ -20,7 +20,8 @@ use super::transcoder::{Transcoder, parse_codec_opts};
 pub enum TranscodeError {
     #[error("video streams in this container have already been transcoded")]
     AlreadyTranscoded,
-
+    #[error(transparent)]
+    TranscoderSetup(#[from] transcoder::TranscoderSetupError),
     #[error(transparent)]
     Ffmpeg(#[from] ffmpeg_next::Error),
 }
@@ -111,7 +112,6 @@ fn setup_stream_mapping_and_transcoders(
             let transcoder = Transcoder::new(
                 &input_stream,
                 output_ctx,
-                output_stream_idx as _,
                 source_label,
                 transcode_job_config,
             )

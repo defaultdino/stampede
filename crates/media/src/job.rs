@@ -14,7 +14,7 @@ pub struct JobConfig {
     pub paths: Vec<PathBuf>,
 }
 
-pub fn process_media<F>(config: &JobConfig, worker: F)
+pub fn walk_media_containers<F>(config: &JobConfig, worker: F)
 where
     F: Fn(PathBuf) + Send + Sync + 'static,
 {
@@ -31,11 +31,6 @@ where
         })
         .collect();
 
-    drop(sender);
-    for handle in discovery_handles {
-        handle.join().expect("discovery thread panicked");
-    }
-
     let worker_handles: Vec<_> = (0..config.jobs)
         .map(|_| {
             let receiver = receiver.clone();
@@ -48,8 +43,17 @@ where
         })
         .collect();
 
-    drop(receiver);
+    let discovery_count = discovery_handles.len();
+    for handle in discovery_handles {
+        handle.join().expect("discovery thread panicked");
+    }
+    drop(sender);
+    log::info!("{discovery_count} discovery threads finished");
+
+    let worker_count = worker_handles.len();
     for handle in worker_handles {
         handle.join().expect("worker thread panicked");
     }
+    drop(receiver);
+    log::info!("{worker_count} worker threads finished")
 }
