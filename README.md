@@ -1,4 +1,4 @@
-`stampede` is a batch processing tool meant to be used for large media libraries. It performs transcoding/deadroll detection jobs in batches and delegates threading options to the underling decoder/encoder used by decoders and encoders in the application. To see all available config options please refer to the [config example](config.example.yml)
+`stampede` is a batch processing tool meant to be used for large media libraries. It performs transcoding/deadroll detection jobs in batches and delegates threading options to the underlying context used by decoders/encoders in the application. To see all available config options please refer to the [config example](config.example.yml)
 
 This project is currently a heavy work in progress and it is not recommended to use it to any serious extent
 
